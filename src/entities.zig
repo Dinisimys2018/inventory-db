@@ -1,5 +1,5 @@
-const assert = std.debug.assert;
 const std = @import("std");
+const assert = std.debug.assert;
 
 pub const OrderItemRow = struct {
     id: u8,

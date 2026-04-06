@@ -40,10 +40,10 @@ pub fn ImmMemTablePoolType(comptime EntryType: type) type {
 
             const free = try allocator.alloc(u6, max_count_mem_tables);
             const filled = try allocator.alloc(u6, max_count_mem_tables);
-
-            for (0..max_count_mem_tables) |index| {
+            var index: u6 = 0;
+            while (index < max_count_mem_tables): (index += 1) {
                 const table: ImmMemTable = try .init(allocator, max_count_entries);
-                tables.appendAssumeCapacity(table, max_count_mem_tables);
+                tables.appendAssumeCapacity(table);
                 free[index] = index;
             }
 

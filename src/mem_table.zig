@@ -1,9 +1,9 @@
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const assert = std.testing.assert;
+const testing = std.testing;
 
 const ImmMemTablePoolType = @import("imm_mem_table.zig").ImmMemTablePoolType;
-const testing = std.testing;
 
 pub fn MemTableType(comptime EntryType: type) type {
     return struct {
@@ -22,7 +22,7 @@ pub fn MemTableType(comptime EntryType: type) type {
             mem_table.* = undefined;
         }
 
-        pub fn fill(mem_table: *MemTable, entries: []*EntryType) void {
+        pub fn fill(mem_table: *MemTable, entries: []EntryType) void {
             assert(mem_table.entries.len <= mem_table.entries.capacity);
 
             for (entries) |entry| {
@@ -47,10 +47,11 @@ pub fn MemTablePoolType(comptime EntryType: type) type {
 
             const free = try allocator.alloc(u6, mem_tables_max_count);
             const filled = try allocator.alloc(u6, mem_tables_max_count);
+            var index: u6 = 0;
 
-            for (0..mem_tables_max_count) |index| {
+            while (index < mem_tables_max_count): (index += 1) {
                 const table: MemTable = try .init(allocator, entries_max_count);
-                tables.appendAssumeCapacity(table, mem_tables_max_count);
+                tables.appendAssumeCapacity(table);
                 free[index] = index;
             }
 
@@ -67,13 +68,13 @@ pub fn MemTablePoolType(comptime EntryType: type) type {
             mem_tables_pool.* = undefined;
         }
 
-        pub fn addEntries(mem_tables_pool: *MemTablePool, entries: []*EntryType) void {
-            var entries_count = 0;
+        pub fn addEntries(mem_tables_pool: *MemTablePool, entries: []EntryType) void {
+            var entries_count: usize = 0;
             var entries_offset: usize = 0;
             var input_entries = entries;
 
             while (entries_count <= entries.len) {
-                const active_table = mem_tables_pool.tables.items[mem_tables_pool.active_table_index];
+                var active_table = mem_tables_pool.tables.items[mem_tables_pool.active_table_index];
 
                 entries_offset = active_table.entries.capacity - active_table.entries.len;
                 entries_count += entries_offset;
@@ -107,21 +108,22 @@ test "mem_table" {
     const entries_max_count = 2;
     const mem_tables_max_count = 2;
 
-    const mem_table_pool: MemTablePoolType(Entity) = try .init(
+    var mem_table_pool: MemTablePoolType(Entity) = try .init(
         allocator,
         mem_tables_max_count,
         entries_max_count,
     );
     defer mem_table_pool.deinit(allocator);
 
-    const input_entries: std.ArrayList(Entity) = try .initCapacity(allocator, entries_max_count);
+    var input_entries: std.ArrayList(Entity) = try .initCapacity(allocator, entries_max_count);
+    var index: u8 = 0;
 
-    for (0..entries_max_count) |i| {
+    while(index < entries_max_count): (index += 1) {
         input_entries.appendAssumeCapacity(.{
-            .id = i,
-            .order_id = i * 2,
+            .id = index,
+            .order_id = index * 2,
         });
     }
 
-    mem_table_pool.addEntries(input_entries);
+    mem_table_pool.addEntries(input_entries.items);
 }
