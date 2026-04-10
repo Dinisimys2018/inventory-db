@@ -1,7 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const some_db = @import("some_db");
+const radix_sort = @import("radix_sort.zig");
 const Config = struct {
     port: u16 = 8019,
 };
@@ -26,6 +26,6 @@ pub fn main(init: std.process.Init) !void {
 
 fn command_start(io: std.Io, config: Config) !void {
     const address = try net.IpAddress.parse("0.0.0.0", config.port);
-    var server = try net.IpAddress.listen(address, io, .{ .reuse_address = true });
+    var server = try net.IpAddress.listen(&address, io, .{ .reuse_address = true });
     defer server.deinit(io);
 }
