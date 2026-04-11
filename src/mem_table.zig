@@ -2,7 +2,14 @@ const std = @import("std");
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
 const testing = std.testing;
+
+const printObj = @import("utils/debug.zig").printObj;
+
+const EntityFieldIndex = @import("index_mem_table.zig").EntityFieldIndex;
+const IndexTableStrategy = @import("index_mem_table.zig").IndexTableStrategy;
+
 pub const MemTablePtr = u8;
+pub const MemEntryPtr = u32;
 
 // TODO: возможно MemTableType можно перенести внутри MemTablePoolType
 pub fn MemTableType(comptime EntryType: type) type {
@@ -11,8 +18,11 @@ pub fn MemTableType(comptime EntryType: type) type {
 
         entries: std.MultiArrayList(EntryType) = .empty,
 
-        pub fn init(mem_table: *MemTable, allocator: std.mem.Allocator, entries_max_count: u32) !void {
+        pub fn init(allocator: std.mem.Allocator, comptime entries_max_count: MemEntryPtr) !*MemTable {
+            var mem_table = try allocator.create(MemTable);
             mem_table.entries = try .initCapacity(allocator, entries_max_count);
+
+            return mem_table;
         }
 
         pub fn deinit(mem_table: *MemTable, allocator: std.mem.Allocator) void {
@@ -21,7 +31,6 @@ pub fn MemTableType(comptime EntryType: type) type {
         }
 
         pub fn insert(mem_table: *MemTable, entries: []EntryType) void {
-            std.debug.print("\nBefore insert\ntable len={d}|table cap={d}|input len={d}|\n============\n", .{ mem_table.entries.len, mem_table.entries.capacity, entries.len });
             for (entries) |entry| {
                 mem_table.entries.appendAssumeCapacity(entry);
             }
@@ -29,15 +38,16 @@ pub fn MemTableType(comptime EntryType: type) type {
     };
 }
 
-pub fn MemTablePoolType(comptime EntryType: type, mem_tables_max_count: comptime_int) type {
+pub fn MemTablePoolType(
+    comptime EntryType: type,
+    comptime indexes_meta: anytype,
+    comptime mem_tables_max_count: MemTablePtr,
+) type {
     return struct {
-        comptime {
-            assert(mem_tables_max_count <= std.math.maxInt(MemTablePtr));
-        }
-
         const MemTablePool = @This();
         const MemTable = MemTableType(EntryType);
-        const TableList = ArrayList(*MemTable);
+        const TableList = []*MemTable;
+        const IndexMap = std.StringArrayHashMapUnmanaged(IndexTableStrategy);
 
         // Struct Fields
         tables: TableList,
@@ -45,40 +55,48 @@ pub fn MemTablePoolType(comptime EntryType: type, mem_tables_max_count: comptime
         filled_table_ptrs: [mem_tables_max_count]bool,
         active_table_ptr: MemTablePtr = 0,
 
-        pub fn init(allocator: std.mem.Allocator, entries_max_count: u32) !MemTablePool {
-            var tables: TableList = try .initCapacity(allocator, mem_tables_max_count);
-            errdefer tables.deinit(allocator);
+        indexes: IndexMap,
 
-            var index: MemTablePtr = 0;
-            const free_table_ptrs: [mem_tables_max_count]bool = .{true} ** mem_tables_max_count;
-            const filled_table_ptrs: [mem_tables_max_count]bool = .{false} ** mem_tables_max_count;
+        pub fn init(allocator: std.mem.Allocator, comptime entries_max_count: u32) !MemTablePool {
+            var tables: TableList = try allocator.alloc(*MemTable, entries_max_count);
+            errdefer allocator.free(tables);
+
+            var indexes: IndexMap = .empty;
+            try indexes.ensureTotalCapacity(allocator, indexes_meta.len);
+
+            var mem_table_ptr: MemTablePtr = 0;
 
             errdefer {
-                for (tables.items) |table| {
+                for (tables) |table| {
                     table.deinit(allocator);
                 }
             }
 
-            while (index < mem_tables_max_count) : (index += 1) {
-                var table = try allocator.create(MemTable);
-                try table.init(allocator, entries_max_count);
-                tables.appendAssumeCapacity(table);
+            while (mem_table_ptr < mem_tables_max_count) : (mem_table_ptr += 1) {
+                tables[mem_table_ptr] = try .init(allocator, entries_max_count);
+            }
+
+            inline for (0..mem_tables_max_count) |table_ptr| {
+                inline for (EntryType.indexes_meta) |index_meta| {
+                    const index_table: index_meta.index_strategy.index_u32.Generic(MemTablePtr, MemEntryPtr) = try .init(allocator, table_ptr, entries_max_count);
+                    indexes.putAssumeCapacity(index_meta.field_name, index_table);
+                }
             }
 
             return .{
                 .tables = tables,
-                .free_table_ptrs = free_table_ptrs,
-                .filled_table_ptrs = filled_table_ptrs,
+                .free_table_ptrs = .{true} ** mem_tables_max_count,
+                .filled_table_ptrs = .{false} ** mem_tables_max_count,
                 .active_table_ptr = 0,
+                .indexes = indexes,
             };
         }
 
         pub fn deinit(mem_tables_pool: *MemTablePool, allocator: std.mem.Allocator) void {
-            for (mem_tables_pool.tables.items) |table| {
+            for (mem_tables_pool.tables) |table| {
                 table.deinit(allocator);
             }
-            mem_tables_pool.tables.deinit(allocator);
-            mem_tables_pool.* = undefined;
+            allocator.free(mem_tables_pool.tables);
         }
 
         pub fn insert(mem_tables_pool: *MemTablePool, entries: []EntryType) void {
@@ -90,7 +108,7 @@ pub fn MemTablePoolType(comptime EntryType: type, mem_tables_max_count: comptime
                 // чтобы другие вызовы не получили доступ к ней
                 mem_tables_pool.free_table_ptrs[mem_tables_pool.active_table_ptr] = false;
 
-                var active_table = mem_tables_pool.tables.items[mem_tables_pool.active_table_ptr];
+                var active_table = mem_tables_pool.tables[mem_tables_pool.active_table_ptr];
 
                 // Получаем количество, которое мы можем вставить в активную таблицу
                 const rest = active_table.entries.capacity - active_table.entries.len;
@@ -158,7 +176,7 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     const Entity = OrderItemRow;
     const entries_max_count = 5;
     const mem_tables_max_count = 5;
-    const MemTablePool = MemTablePoolType(Entity, mem_tables_max_count);
+    const MemTablePool = MemTablePoolType(Entity, Entity.indexes_meta, mem_tables_max_count);
     var mem_table_pool: MemTablePool = try .init(
         allocator,
         entries_max_count,
@@ -179,8 +197,6 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     }
 
     //==== General test ====
-
-    std.debug.print("\nCHECK\n{any}\n============\n", .{mem_table_pool.tables.items});
 
     mem_table_pool.insert(input_entries.items);
 
