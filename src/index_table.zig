@@ -19,8 +19,6 @@ pub fn EntityFieldIndexListType(comptime options: EntityFieldIndexListOptions) t
     };
 }
 
-const IndexesMap = std.StringArrayHashMapUnmanaged(usize);
-
 pub fn IndexTableType(
     comptime Key: type,
     comptime TablePtr: type,
@@ -93,7 +91,19 @@ pub fn IndexPoolType(
 ) type {
     const IndexTableU32 = IndexTableType(u32, TablePtr, ValuePtr);
     const IndexListU32 = []*IndexTableU32;
+
+    // const IndexTableStrategy = union(enum) {
+    //     indexes_u32: IndexTableU32,
+    // };
+
+
+    const IndexesMap = std.StringArrayHashMapUnmanaged(usize);
     const IndexesMapList = []*IndexesMap;
+
+    // const LookupValue = struct {
+    //     table_ptr: TablePtr,
+    //     value_ptr: ValuePtr,
+    // };
 
     const indexes_u32_max_count = tables_max_count * indexes_meta.indexes_u32.len;
     const indexes_total_count = indexes_u32_max_count;
@@ -134,13 +144,19 @@ pub fn IndexPoolType(
             var index_ptr_indexes_u32: u8 = 0;
 
             errdefer {
-                for (0..index_ptr_indexes_u32) |index_ptr| indexes_u32[index_ptr].deinit(allocator);
+                for (0..index_ptr_indexes_u32) |index_ptr| {
+                    indexes_u32[index_ptr].deinit(allocator);
+                }
             }
 
             while (table_ptr < tables_max_count) : (table_ptr += 1) {
                 var index_ptr: u8 = 0;
                 while (index_ptr < indexes_meta.indexes_u32.len) : (index_ptr += 1) {
                     indexes_u32[index_ptr_indexes_u32] = try .init(allocator, table_ptr, entries_max_count);
+                    // var indexes_map_value = try allocator.create(IndexesMapValue);
+                    // indexes_map_value.index_ptr = @intFromPtr(indexes_u32[index_ptr_indexes_u32]);
+                    // indexes_map_value.strategy = .indexes_u32;
+
                     indexes_map_list[table_ptr].putAssumeCapacity(indexes_meta.indexes_u32[index_ptr].field_name, @intFromPtr(indexes_u32[index_ptr_indexes_u32]));
                     index_ptr_indexes_u32 += 1;
                 }
@@ -230,7 +246,8 @@ test "IndexPool" {
 
     var table_ptr: TestTablePtr = 0;
 
-    var input = [_]u32{ 100, 200, 300, 400 };
+    const not_found_input = 777;
+    var input = [_]TestValuePtr{ 100, 200, 300, 400 };
 
     while (table_ptr < tables_max_count) : (table_ptr += 1) {
         try testing.expect(index_pool.getIndexPtr(table_ptr, "order_id") != 0);
@@ -243,5 +260,9 @@ test "IndexPool" {
             try testing.expect(find_lookup_value.table_ptr == table_ptr);
             try testing.expect(find_lookup_value.value_ptr == value_ptr);
         }
+
+        const not_found_value = index_pool.find(table_ptr, "order_id", not_found_input);
+
+        if (not_found_value != null) return error.TestError;
     }
 }
