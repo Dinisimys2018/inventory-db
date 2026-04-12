@@ -5,12 +5,11 @@ const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const EntityFieldIndex = @import("index_mem_table.zig").EntityFieldIndex;
-const IndexTableStrategy = @import("index_mem_table.zig").IndexTableStrategy;
+const EntityFieldIndex = @import("index_table.zig").EntityFieldIndex;
+const IndexPoolType = @import("index_table.zig").IndexPoolType;
 
 pub const MemTablePtr = u8;
 pub const MemEntryPtr = u32;
-
 // TODO: возможно MemTableType можно перенести внутри MemTablePoolType
 pub fn MemTableType(comptime EntryType: type) type {
     return struct {
@@ -47,7 +46,7 @@ pub fn MemTablePoolType(
         const MemTablePool = @This();
         const MemTable = MemTableType(EntryType);
         const TableList = []*MemTable;
-        const IndexMap = std.StringArrayHashMapUnmanaged(IndexTableStrategy);
+        const MemIndexPool = IndexPoolType(MemTablePtr, MemEntryPtr, indexes_meta);
 
         // Struct Fields
         tables: TableList,
@@ -55,14 +54,10 @@ pub fn MemTablePoolType(
         filled_table_ptrs: [mem_tables_max_count]bool,
         active_table_ptr: MemTablePtr = 0,
 
-        indexes: IndexMap,
 
         pub fn init(allocator: std.mem.Allocator, comptime entries_max_count: u32) !MemTablePool {
             var tables: TableList = try allocator.alloc(*MemTable, entries_max_count);
             errdefer allocator.free(tables);
-
-            var indexes: IndexMap = .empty;
-            try indexes.ensureTotalCapacity(allocator, indexes_meta.len);
 
             var mem_table_ptr: MemTablePtr = 0;
 
@@ -76,19 +71,11 @@ pub fn MemTablePoolType(
                 tables[mem_table_ptr] = try .init(allocator, entries_max_count);
             }
 
-            inline for (0..mem_tables_max_count) |table_ptr| {
-                inline for (EntryType.indexes_meta) |index_meta| {
-                    const index_table: index_meta.index_strategy.index_u32.Generic(MemTablePtr, MemEntryPtr) = try .init(allocator, table_ptr, entries_max_count);
-                    indexes.putAssumeCapacity(index_meta.field_name, index_table);
-                }
-            }
-
             return .{
                 .tables = tables,
                 .free_table_ptrs = .{true} ** mem_tables_max_count,
                 .filled_table_ptrs = .{false} ** mem_tables_max_count,
                 .active_table_ptr = 0,
-                .indexes = indexes,
             };
         }
 
