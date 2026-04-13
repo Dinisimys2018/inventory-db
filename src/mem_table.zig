@@ -47,6 +47,16 @@ pub fn MemTablePoolType(
     comptime entries_max_count: u32,
 ) type {
     return struct {
+        const FieldEntry = std.MultiArrayList(EntryType).Field;
+        const entry_field_tags:[indexes_meta.len]FieldEntry = blk: {
+            var tmp_entry_field_tags: [indexes_meta.len]FieldEntry = undefined;
+            var i: usize = 0;
+            while (i < indexes_meta.len) : (i += 1) {
+                tmp_entry_field_tags[i] = std.meta.stringToEnum(FieldEntry, indexes_meta[i].field_name).?;
+            }
+            break :blk tmp_entry_field_tags;
+        };
+
         const MemTablePool = @This();
         const MemTable = MemTableType(EntryType, entries_max_count);
         const TableList = []*MemTable;
@@ -76,7 +86,7 @@ pub fn MemTablePoolType(
             var mem_table_ptr: MemTablePtr = 0;
 
             while (mem_table_ptr < mem_tables_max_count) : (mem_table_ptr += 1) {
-                mem_table_pool.tables[mem_table_ptr] = try .init(allocator, entries_max_count);
+                mem_table_pool.tables[mem_table_ptr] = try .init(allocator);
             }
 
             return mem_table_pool;
@@ -113,11 +123,11 @@ pub fn MemTablePoolType(
                 const toInsert = entries[entries_start..entries_end];
                 active_table.insert(toInsert);
 
-                inline for (indexes_meta) |index_meta| {
-                    const Field = comptime std.MultiArrayList(EntryType).Field;
-                    const field_tag = comptime std.meta.stringToEnum(Field, index_meta.field_name).?;
-                    //TODO: надо провить насколько тут эффективно работает slice().items() для получения указателей на entries
-                    try mem_tables_pool.index_pool.insert(mem_tables_pool.active_table_ptr, index_meta.field_name, active_table.entries.slice().items(field_tag));
+                comptime var field_meta_index: u8 = 0;
+
+                inline while (field_meta_index < indexes_meta.len) : (field_meta_index += 1) {
+                    //TODO: Necessary to check the efficiency of this method .slice().items()
+                    try mem_tables_pool.index_pool.insert(mem_tables_pool.active_table_ptr, indexes_meta[field_meta_index].field_name, active_table.entries.slice().items(entry_field_tags[field_meta_index]));
                 }
 
                 // Если мы заполнили все свободное место
@@ -248,4 +258,63 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
         const find_entry_by_product_id = try mem_table_pool.find("product_id", expected_entry.product_id);
         try testing.expectEqual(expected_entry.order_id, find_entry_by_product_id.order_id);
     }
+}
+
+test "benchmark MemPool insert" {
+    const allocator = std.testing.allocator;
+
+    const entries_max_count: u32 = 16_384;
+    const mem_tables_max_count: MemTablePtr = 97;
+    const MemTablePool = MemTablePoolType(
+        TestEntity,
+        TestEntity.indexes_meta,
+        mem_tables_max_count,
+        entries_max_count,
+    );
+
+    var mem_table_pool: *MemTablePool = try .init(allocator);
+    defer mem_table_pool.deinit(allocator);
+
+    const desired_bytes: usize = 12 * 1024 * 1024;
+    const entries_total: usize = desired_bytes / @sizeOf(TestEntity);
+
+    // Preparing input data
+    var input_entries: std.ArrayList(TestEntity) = try .initCapacity(allocator, entries_total);
+    defer input_entries.deinit(allocator);
+
+    for (0..entries_total) |idx| {
+        const i: u32 = @intCast(idx);
+        const entity: TestEntity = .{
+            .order_id = i * 2 + 1,
+            .product_id = i * 2 + 2,
+        };
+        input_entries.appendAssumeCapacity(entity);
+    }
+
+    const Io = std.Io;
+    const io = std.testing.io;
+    const start_ns = Io.Clock.awake.now(io).nanoseconds;
+    try mem_table_pool.insert(input_entries.items);
+    const end_ns = Io.Clock.awake.now(io).nanoseconds;
+    const elapsed_ns = end_ns - start_ns;
+    const elapsed_ms: u64 = @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms));
+    const elapsed_s: f64 =
+        @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, std.time.ns_per_s);
+    const bytes_total: usize = @sizeOf(TestEntity) * input_entries.items.len;
+    const mb_total: u64 = @intCast(@divTrunc(bytes_total, 1024 * 1024));
+
+    std.debug.print(
+        \\benchmark: MemPool insert
+        \\  entries: {d}
+        \\  time:    {d} ms ({d:.2} s)
+        \\  data:    {d} bytes (~{d} MiB)
+        \\
+    ,
+        .{ input_entries.items.len, elapsed_ms, elapsed_s, bytes_total, mb_total },
+    );
+
+    const count_filled_tables = mem_table_pool.calculateFilledTables();
+    const count_free_tables = mem_table_pool.calculateFreeTables();
+    try testing.expectEqual(mem_tables_max_count - 1, count_filled_tables);
+    try testing.expectEqual(1, count_free_tables);
 }
