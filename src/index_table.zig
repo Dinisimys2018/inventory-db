@@ -42,6 +42,9 @@ pub fn IndexTableType(
             var index_table = try allocator.create(IndexTable);
             index_table.table_ptr = table_ptr;
             index_table.entries = .empty;
+            index_table.max_key = 0;
+            index_table.min_key = 0;
+
             try index_table.entries.ensureTotalCapacity(allocator, entries_max_count);
 
             return index_table;
@@ -55,6 +58,11 @@ pub fn IndexTableType(
         pub fn insert(index_table: *IndexTable, keys: []Key) void {
             var value_ptr: ValuePtr = 0;
 
+            if (index_table.entries.size == 0) {
+                index_table.min_key = keys[0];
+                index_table.max_key = keys[0];
+            }
+
             while (value_ptr < keys.len) : (value_ptr += 1) {
                 if (keys[value_ptr] < index_table.min_key) {
                     index_table.min_key = keys[value_ptr];
@@ -63,6 +71,8 @@ pub fn IndexTableType(
                 }
                 index_table.entries.putAssumeCapacity(keys[value_ptr], value_ptr);
             }
+
+
         }
 
         pub fn find(index_table: *IndexTable, key: Key) !LookupValue {
@@ -154,7 +164,6 @@ pub fn IndexPoolType(
 
             allocator.free(index_pool.indexes_map);
             allocator.free(index_pool.fields_list);
-
             allocator.destroy(index_pool);
         }
 
@@ -171,7 +180,7 @@ pub fn IndexPoolType(
             return error.NotFound;
         }
 
-        pub fn insert(index_pool: *IndexPool, table_ptr: TablePtr, field_name: []const u8, field_values: []u32) !void {
+        pub fn insert(index_pool: *IndexPool, table_ptr: TablePtr, field_name: []const u8, field_values: []ValuePtr) !void {
             const index_union = try index_pool.getIndexTable(table_ptr, field_name);
             switch (index_union.*) {
                 .indexes_u32 => |index_table| {
@@ -259,11 +268,14 @@ test "IndexPool" {
                 input_table[i] = value + table_ptr;
             }
 
+            //==== Insert to Index Pool ====
             try index_pool.insert(table_ptr, field_name, input_table);
 
             var value_ptr: TestValuePtr = 0;
 
             while (value_ptr < input.len) : (value_ptr += 1) {
+                
+                //==== Find on Index Pool ====
                 const find_lookup_value = try index_pool.find(field_name, input_table[value_ptr]);
                 try testing.expect(find_lookup_value.table_ptr == table_ptr);
                 try testing.expect(find_lookup_value.value_ptr == value_ptr);

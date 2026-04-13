@@ -10,13 +10,13 @@ const IndexPoolType = @import("index_table.zig").IndexPoolType;
 pub const MemTablePtr = u8;
 pub const MemEntryPtr = u32;
 // TODO: возможно MemTableType можно перенести внутри MemTablePoolType
-pub fn MemTableType(comptime EntryType: type) type {
+pub fn MemTableType(comptime EntryType: type, comptime entries_max_count: MemEntryPtr) type {
     return struct {
         const MemTable = @This();
 
         entries: std.MultiArrayList(EntryType) = .empty,
 
-        pub fn init(allocator: std.mem.Allocator, comptime entries_max_count: MemEntryPtr) !*MemTable {
+        pub fn init(allocator: std.mem.Allocator) !*MemTable {
             var mem_table = try allocator.create(MemTable);
             mem_table.entries = try .initCapacity(allocator, entries_max_count);
 
@@ -34,7 +34,7 @@ pub fn MemTableType(comptime EntryType: type) type {
             }
         }
 
-        pub fn find(mem_table: *MemTable, entry_ptr: MemEntryPtr) ?EntryType {
+        pub fn find(mem_table: *MemTable, entry_ptr: MemEntryPtr) !EntryType {
             return mem_table.entries.get(entry_ptr);
         }
     };
@@ -48,7 +48,7 @@ pub fn MemTablePoolType(
 ) type {
     return struct {
         const MemTablePool = @This();
-        const MemTable = MemTableType(EntryType);
+        const MemTable = MemTableType(EntryType, entries_max_count);
         const TableList = []*MemTable;
         const MemIndexPool = IndexPoolType(
             MemTablePtr,
@@ -91,7 +91,7 @@ pub fn MemTablePoolType(
             allocator.destroy(mem_tables_pool);
         }
 
-        pub fn insert(mem_tables_pool: *MemTablePool, entries: []EntryType) void {
+        pub fn insert(mem_tables_pool: *MemTablePool, entries: []EntryType) !void {
             var entries_start: usize = 0;
             var entries_end: usize = 0;
 
@@ -110,8 +110,15 @@ pub fn MemTablePoolType(
                 if (entries_end >= entries.len) {
                     entries_end = entries.len;
                 }
+                const toInsert = entries[entries_start..entries_end];
+                active_table.insert(toInsert);
 
-                active_table.insert(entries[entries_start..entries_end]);
+                inline for (indexes_meta) |index_meta| {
+                    const Field = comptime std.MultiArrayList(EntryType).Field;
+                    const field_tag = comptime std.meta.stringToEnum(Field, index_meta.field_name).?;
+                    //TODO: надо провить насколько тут эффективно работает slice().items() для получения указателей на entries
+                    try mem_tables_pool.index_pool.insert(mem_tables_pool.active_table_ptr, index_meta.field_name, active_table.entries.slice().items(field_tag));
+                }
 
                 // Если мы заполнили все свободное место
                 // значит перемещаем активную таблицу в filled_table_ptrs
@@ -208,28 +215,37 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     // которое может вместить весь pool минус 1,
     // чтобы не заполнить все таблицы
     const entries_total = entries_max_count * mem_tables_max_count - 1;
-    
+
     // Preparing input data
     var input_entries: std.ArrayList(TestEntity) = try .initCapacity(allocator, entries_total);
     defer input_entries.deinit(allocator);
-    var find_entries_map: std.AutoHashMapUnmanaged(TestEntity.OrderId, TestEntity.ProductId) = .empty;
-    try find_entries_map.ensureTotalCapacity(entries_total);
-    defer find_entries_map.deinit();
 
     var index: u8 = 0;
 
     while (index < entries_total) : (index += 1) {
-        input_entries.appendAssumeCapacity(.{ .order_id = index * 2, .product_id = index * 2 + 1 });
+        const entity: TestEntity = .{
+            .order_id = index * 2 + 1,
+            .product_id = index * 2 + 2,
+        };
+        input_entries.appendAssumeCapacity(entity);
     }
     // -------------------
 
     //==== General test ====
 
-    mem_table_pool.insert(input_entries.items);
+    try mem_table_pool.insert(input_entries.items);
 
     const count_filled_tables = mem_table_pool.calculateFilledTables();
     const count_free_tables = mem_table_pool.calculateFreeTables();
 
     try testing.expectEqual(mem_tables_max_count - 1, count_filled_tables);
     try testing.expectEqual(mem_tables_max_count - 1 - count_filled_tables, count_free_tables);
+
+    for (input_entries.items) |expected_entry| {
+        const find_entry_by_order_id = try mem_table_pool.find("order_id", expected_entry.order_id);
+        try testing.expectEqual(expected_entry.product_id, find_entry_by_order_id.product_id);
+
+        const find_entry_by_product_id = try mem_table_pool.find("product_id", expected_entry.product_id);
+        try testing.expectEqual(expected_entry.order_id, find_entry_by_product_id.order_id);
+    }
 }
