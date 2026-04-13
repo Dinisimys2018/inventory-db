@@ -1,0 +1,12 @@
+============================
+benchmark: MemPool insert
+  entries: 6553599
+  time:    3626 ms (3 s)
+  data:    104857600 bytes (~100 MiB)
+============================
+benchmark: MemPool find
+  entries: 6553599
+  lookups: 100000
+  time:    95 ms (0 s)
+  data:    104857600 bytes (~100 MiB)
+============================

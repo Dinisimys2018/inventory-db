@@ -1,3 +1,9 @@
+//! Notes:
+//! - Порядок создания индексов в IndexPool должен совпадать с порядок создания таблиц в MemTablePool
+//! ---- Таким образом мы гарантируем что table_ptr в индексе соответсвует таблице в пулле
+//! - Важен порядок вставки entries в MemTable, они должен совпадать с порядком вставки ключей в IndexPool
+//! ---- Таким образом мы гарантируем что value_ptr в индексе соответствует entry в таблице
+
 const std = @import("std");
 const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
@@ -11,6 +17,10 @@ pub const MemTablePtr = u8;
 pub const MemEntryPtr = u32;
 // TODO: возможно MemTableType можно перенести внутри MemTablePoolType
 pub fn MemTableType(comptime EntryType: type, comptime entries_max_count: MemEntryPtr) type {
+    if (!@hasField(EntryType, "time_label")) {
+        @compileError("EntryType must have time_label field");
+    }
+
     return struct {
         const MemTable = @This();
 
@@ -28,9 +38,33 @@ pub fn MemTableType(comptime EntryType: type, comptime entries_max_count: MemEnt
             allocator.destroy(mem_table);
         }
 
-        pub fn insert(mem_table: *MemTable, entries: []EntryType) void {
+        fn rdtsc() u64 {
+            var lo: u32 = undefined;
+            var hi: u32 = undefined;
+            asm volatile ("rdtsc"
+                : [lo] "={eax}" (lo),
+                  [hi] "={edx}" (hi),
+            );
+            return (@as(u64, hi) << 32) | lo;
+        }
+
+        pub fn insert(mem_table: *MemTable, io: std.Io, entries: []*EntryType) void {
+            // TODO: syscall for getting time
+            // If usinge unique time_label for each entry, need to check next variant:
+            // fn rdtsc() u64 {
+            //     var lo: u32 = undefined;
+            //     var hi: u32 = undefined;
+            //     asm volatile ("rdtsc"
+            //         : [lo] "={eax}" (lo),
+            //           [hi] "={edx}" (hi),
+            //     );
+            //     return (@as(u64, hi) << 32) | lo;
+            // }
+            const time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
+
             for (entries) |entry| {
-                mem_table.entries.appendAssumeCapacity(entry);
+                entry.time_label = time_label;
+                mem_table.entries.appendAssumeCapacity(entry.*);
             }
         }
 
@@ -48,7 +82,7 @@ pub fn MemTablePoolType(
 ) type {
     return struct {
         const FieldEntry = std.MultiArrayList(EntryType).Field;
-        const entry_field_tags:[indexes_meta.len]FieldEntry = blk: {
+        const entry_field_tags: [indexes_meta.len]FieldEntry = blk: {
             var tmp_entry_field_tags: [indexes_meta.len]FieldEntry = undefined;
             var i: usize = 0;
             while (i < indexes_meta.len) : (i += 1) {
@@ -101,7 +135,7 @@ pub fn MemTablePoolType(
             allocator.destroy(mem_tables_pool);
         }
 
-        pub fn insert(mem_tables_pool: *MemTablePool, entries: []EntryType) !void {
+        pub fn insert(mem_tables_pool: *MemTablePool, io: std.Io, entries: []*EntryType) !void {
             var entries_start: usize = 0;
             var entries_end: usize = 0;
 
@@ -121,7 +155,7 @@ pub fn MemTablePoolType(
                     entries_end = entries.len;
                 }
                 const toInsert = entries[entries_start..entries_end];
-                active_table.insert(toInsert);
+                active_table.insert(io, toInsert);
 
                 comptime var field_meta_index: u8 = 0;
 
@@ -190,6 +224,7 @@ const TestEntity = struct {
     pub const OrderId = u32;
     pub const ProductId = u32;
 
+    time_label: u64 = 0,
     order_id: OrderId,
     product_id: ProductId,
 
@@ -207,8 +242,24 @@ const TestEntity = struct {
     };
 };
 
+fn testPreparingEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
+    var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
+    var index: MemEntryPtr = 0;
+
+    while (index < entries_total) : (index += 1) {
+        var entity: TestEntity = .{
+            .order_id = index + 1,
+            .product_id = index + 2,
+        };
+        input_entries[index] = &entity;
+    }
+
+    return input_entries;
+}
+
 test "MemTablePool: (max count entries for all tables in pool) - 1" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
     const entries_max_count = 5;
     const mem_tables_max_count = 5;
@@ -221,29 +272,20 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     var mem_table_pool: *MemTablePool = try .init(allocator);
     defer mem_table_pool.deinit(allocator);
 
+    // Preparing input data
+
     // Максимальное количество entries,
     // которое может вместить весь pool минус 1,
     // чтобы не заполнить все таблицы
     const entries_total = entries_max_count * mem_tables_max_count - 1;
 
-    // Preparing input data
-    var input_entries: std.ArrayList(TestEntity) = try .initCapacity(allocator, entries_total);
-    defer input_entries.deinit(allocator);
-
-    var index: u8 = 0;
-
-    while (index < entries_total) : (index += 1) {
-        const entity: TestEntity = .{
-            .order_id = index * 2 + 1,
-            .product_id = index * 2 + 2,
-        };
-        input_entries.appendAssumeCapacity(entity);
-    }
+    const input_entries = try testPreparingEntries(allocator, entries_total);
+    defer allocator.free(input_entries);
     // -------------------
 
     //==== General test ====
 
-    try mem_table_pool.insert(input_entries.items);
+    try mem_table_pool.insert(io, input_entries);
 
     const count_filled_tables = mem_table_pool.calculateFilledTables();
     const count_free_tables = mem_table_pool.calculateFreeTables();
@@ -260,11 +302,17 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     }
 }
 
-test "benchmark MemPool insert" {
+//TODO: chenge benchmark
+test "benchmark MemPool" {
     const allocator = std.testing.allocator;
+    const io = std.testing.io;
 
-    const entries_max_count: u32 = 16_384;
-    const mem_tables_max_count: MemTablePtr = 97;
+    const usage_memory_mib: usize = 100;
+    const usage_memory_bytes: usize = usage_memory_mib * 1024 * 1024;
+    const mem_tables_max_count: MemTablePtr = 5;
+    const filled_tables_count: usize = 3;
+    const entries_max_count: MemEntryPtr = @intCast(usage_memory_bytes / filled_tables_count / @sizeOf(TestEntity)); //100MiB
+
     const MemTablePool = MemTablePoolType(
         TestEntity,
         TestEntity.indexes_meta,
@@ -275,46 +323,66 @@ test "benchmark MemPool insert" {
     var mem_table_pool: *MemTablePool = try .init(allocator);
     defer mem_table_pool.deinit(allocator);
 
-    const desired_bytes: usize = 12 * 1024 * 1024;
-    const entries_total: usize = desired_bytes / @sizeOf(TestEntity);
+    // Preparing data
+    const entries_total = entries_max_count * filled_tables_count;
+    const input_entries = try testPreparingEntries(allocator, entries_total);
+    defer allocator.free(input_entries);
+    // -------------------
 
-    // Preparing input data
-    var input_entries: std.ArrayList(TestEntity) = try .initCapacity(allocator, entries_total);
-    defer input_entries.deinit(allocator);
-
-    for (0..entries_total) |idx| {
-        const i: u32 = @intCast(idx);
-        const entity: TestEntity = .{
-            .order_id = i * 2 + 1,
-            .product_id = i * 2 + 2,
-        };
-        input_entries.appendAssumeCapacity(entity);
-    }
-
-    const Io = std.Io;
-    const io = std.testing.io;
-    const start_ns = Io.Clock.awake.now(io).nanoseconds;
-    try mem_table_pool.insert(input_entries.items);
-    const end_ns = Io.Clock.awake.now(io).nanoseconds;
-    const elapsed_ns = end_ns - start_ns;
-    const elapsed_ms: u64 = @intCast(@divTrunc(elapsed_ns, std.time.ns_per_ms));
-    const elapsed_s: f64 =
-        @as(f64, @floatFromInt(elapsed_ns)) / @as(f64, std.time.ns_per_s);
-    const bytes_total: usize = @sizeOf(TestEntity) * input_entries.items.len;
-    const mb_total: u64 = @intCast(@divTrunc(bytes_total, 1024 * 1024));
-
+    //==== Insert benchmark ====
+    var start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
+    try mem_table_pool.insert(io, input_entries);
+    var diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
     std.debug.print(
+        \\
         \\benchmark: MemPool insert
         \\  entries: {d}
-        \\  time:    {d} ms ({d:.2} s)
-        \\  data:    {d} bytes (~{d} MiB)
+        \\  time:    {d} ms ({d} s)
+        \\  data:    {d} bytes (~{d:.2} MiB)
         \\
     ,
-        .{ input_entries.items.len, elapsed_ms, elapsed_s, bytes_total, mb_total },
+        .{
+            input_entries.len,
+            diff_ms,
+            @divTrunc(diff_ms, 1000),
+            usage_memory_bytes,
+            usage_memory_mib,
+        },
+    );
+    try testing.expect(diff_ms < 4000); //TODO: Need to research
+
+
+    // ==== Find benchmark ====
+    const lookups_total = 100_000;
+
+    start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
+    for (input_entries[0..lookups_total]) |expected_entry| {
+        const entry_by_order_id = try mem_table_pool.find("order_id", expected_entry.order_id);
+        const entry_by_product_id = try mem_table_pool.find("product_id", expected_entry.product_id);
+        try testing.expectEqual(entry_by_product_id.product_id, entry_by_order_id.product_id);
+        try testing.expectEqual(entry_by_product_id.order_id, entry_by_order_id.order_id);
+    }
+
+    diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
+
+        std.debug.print(
+        \\
+        \\ benchmark: MemPool find
+        \\  entries: {d}
+        \\  lookups: {d}
+        \\  time:    {d} ms ({d} s)
+        \\  data:    {d} bytes (~{d:.2} MiB)
+        \\
+    ,
+        .{
+            input_entries.len,
+            lookups_total,
+            diff_ms,
+            @divTrunc(diff_ms, 1000),
+            usage_memory_bytes,
+            usage_memory_mib,
+        },
     );
 
-    const count_filled_tables = mem_table_pool.calculateFilledTables();
-    const count_free_tables = mem_table_pool.calculateFreeTables();
-    try testing.expectEqual(mem_tables_max_count - 1, count_filled_tables);
-    try testing.expectEqual(1, count_free_tables);
+    try testing.expect(diff_ms < 1000); //TODO: Need to research
 }
