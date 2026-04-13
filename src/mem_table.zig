@@ -5,7 +5,6 @@ const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const EntityFieldIndex = @import("index_table.zig").EntityFieldIndex;
 const IndexPoolType = @import("index_table.zig").IndexPoolType;
 
 pub const MemTablePtr = u8;
@@ -34,6 +33,10 @@ pub fn MemTableType(comptime EntryType: type) type {
                 mem_table.entries.appendAssumeCapacity(entry);
             }
         }
+
+        pub fn find(mem_table: *MemTable, entry_ptr: MemEntryPtr) ?EntryType {
+            return mem_table.entries.get(entry_ptr);
+        }
     };
 }
 
@@ -41,42 +44,42 @@ pub fn MemTablePoolType(
     comptime EntryType: type,
     comptime indexes_meta: anytype,
     comptime mem_tables_max_count: MemTablePtr,
+    comptime entries_max_count: u32,
 ) type {
     return struct {
         const MemTablePool = @This();
         const MemTable = MemTableType(EntryType);
         const TableList = []*MemTable;
-        const MemIndexPool = IndexPoolType(MemTablePtr, MemEntryPtr, indexes_meta);
+        const MemIndexPool = IndexPoolType(
+            MemTablePtr,
+            MemEntryPtr,
+            indexes_meta,
+            mem_tables_max_count,
+            entries_max_count,
+        );
 
         // Struct Fields
         tables: TableList,
         free_table_ptrs: [mem_tables_max_count]bool,
         filled_table_ptrs: [mem_tables_max_count]bool,
         active_table_ptr: MemTablePtr = 0,
+        index_pool: *MemIndexPool,
 
-
-        pub fn init(allocator: std.mem.Allocator, comptime entries_max_count: u32) !MemTablePool {
-            var tables: TableList = try allocator.alloc(*MemTable, entries_max_count);
-            errdefer allocator.free(tables);
+        pub fn init(allocator: std.mem.Allocator) !*MemTablePool {
+            var mem_table_pool = try allocator.create(MemTablePool);
+            mem_table_pool.tables = try allocator.alloc(*MemTable, mem_tables_max_count);
+            mem_table_pool.free_table_ptrs = .{true} ** mem_tables_max_count;
+            mem_table_pool.filled_table_ptrs = .{false} ** mem_tables_max_count;
+            mem_table_pool.active_table_ptr = 0;
+            mem_table_pool.index_pool = try .init(allocator);
 
             var mem_table_ptr: MemTablePtr = 0;
 
-            errdefer {
-                for (tables) |table| {
-                    table.deinit(allocator);
-                }
-            }
-
             while (mem_table_ptr < mem_tables_max_count) : (mem_table_ptr += 1) {
-                tables[mem_table_ptr] = try .init(allocator, entries_max_count);
+                mem_table_pool.tables[mem_table_ptr] = try .init(allocator, entries_max_count);
             }
 
-            return .{
-                .tables = tables,
-                .free_table_ptrs = .{true} ** mem_tables_max_count,
-                .filled_table_ptrs = .{false} ** mem_tables_max_count,
-                .active_table_ptr = 0,
-            };
+            return mem_table_pool;
         }
 
         pub fn deinit(mem_tables_pool: *MemTablePool, allocator: std.mem.Allocator) void {
@@ -84,6 +87,8 @@ pub fn MemTablePoolType(
                 table.deinit(allocator);
             }
             allocator.free(mem_tables_pool.tables);
+            mem_tables_pool.index_pool.deinit(allocator);
+            allocator.destroy(mem_tables_pool);
         }
 
         pub fn insert(mem_tables_pool: *MemTablePool, entries: []EntryType) void {
@@ -130,6 +135,12 @@ pub fn MemTablePoolType(
             }
         }
 
+        pub fn find(mem_tables_pool: *MemTablePool, field_name: []const u8, field_value: anytype) !EntryType {
+            const lookup_value = try mem_tables_pool.index_pool.find(field_name, field_value);
+
+            return try mem_tables_pool.tables[lookup_value.table_ptr].find(lookup_value.value_ptr);
+        }
+
         pub fn calculateFreeTables(mem_tables_pool: *MemTablePool) MemTablePtr {
             var count_tables: MemTablePtr = 0;
             for (mem_tables_pool.free_table_ptrs) |is_free| {
@@ -155,33 +166,62 @@ pub fn MemTablePoolType(
 }
 
 // ==== Testing ====
-const OrderItemRow = @import("entities.zig").OrderItemRow;
+const EntityFieldIndexListType = @import("index_table.zig").EntityFieldIndexListType;
+const fields_count = 2;
+
+const TestEntity = struct {
+    pub const OrderId = u32;
+    pub const ProductId = u32;
+
+    order_id: OrderId,
+    product_id: ProductId,
+
+    pub const IndexesMeta = EntityFieldIndexListType(fields_count);
+
+    pub const indexes_meta: IndexesMeta = .{
+        .{
+            .field_name = "order_id",
+            .index_strategy = .indexes_u32,
+        },
+        .{
+            .field_name = "product_id",
+            .index_strategy = .indexes_u32,
+        },
+    };
+};
 
 test "MemTablePool: (max count entries for all tables in pool) - 1" {
     const allocator = std.testing.allocator;
 
-    const Entity = OrderItemRow;
     const entries_max_count = 5;
     const mem_tables_max_count = 5;
-    const MemTablePool = MemTablePoolType(Entity, Entity.indexes_meta, mem_tables_max_count);
-    var mem_table_pool: MemTablePool = try .init(
-        allocator,
+    const MemTablePool = MemTablePoolType(
+        TestEntity,
+        TestEntity.indexes_meta,
+        mem_tables_max_count,
         entries_max_count,
     );
+    var mem_table_pool: *MemTablePool = try .init(allocator);
     defer mem_table_pool.deinit(allocator);
 
     // Максимальное количество entries,
     // которое может вместить весь pool минус 1,
     // чтобы не заполнить все таблицы
-    const entries_count = entries_max_count * mem_tables_max_count - 1;
-    var input_entries: std.ArrayList(Entity) = try .initCapacity(allocator, entries_count);
+    const entries_total = entries_max_count * mem_tables_max_count - 1;
+    
+    // Preparing input data
+    var input_entries: std.ArrayList(TestEntity) = try .initCapacity(allocator, entries_total);
     defer input_entries.deinit(allocator);
+    var find_entries_map: std.AutoHashMapUnmanaged(TestEntity.OrderId, TestEntity.ProductId) = .empty;
+    try find_entries_map.ensureTotalCapacity(entries_total);
+    defer find_entries_map.deinit();
 
     var index: u8 = 0;
 
-    while (index < entries_count) : (index += 1) {
+    while (index < entries_total) : (index += 1) {
         input_entries.appendAssumeCapacity(.{ .order_id = index * 2, .product_id = index * 2 + 1 });
     }
+    // -------------------
 
     //==== General test ====
 
