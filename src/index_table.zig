@@ -1,3 +1,5 @@
+//TODO: - change all errors to Error Enum Type
+
 const std = @import("std");
 const ArrayList = std.array_list;
 const assert = std.debug.assert;
@@ -168,7 +170,9 @@ pub fn IndexPoolType(
         }
 
         pub fn getIndexTable(index_pool: *IndexPool, table_ptr: TablePtr, field_name: []const u8) !*IndexTableUnion {
-            assert(table_ptr < tables_max_count);
+            if (table_ptr >= tables_max_count) {
+                return error.TablePtrOutOfBound;
+            }
 
             var field_index: u8 = 0;
             while (field_index < index_pool.fields_list.len) : (field_index += 1) {
@@ -227,7 +231,7 @@ const TestEntity = struct {
     };
 };
 
-test "IndexPool" {
+test "IndexPool base" {
     const allocator = std.testing.allocator;
     const tables_max_count = 5;
     const entries_max_count = 5;
@@ -253,10 +257,10 @@ test "IndexPool" {
     var table_ptr: TestTablePtr = 0;
 
     // Preparing input data
-    const not_found_input = 1000;
-    const input = [_]TestValuePtr{ 100, 200, 300, 400 };
-    var input_table = try allocator.alloc(TestValuePtr, input.len);
-    defer allocator.free(input_table);
+    const not_found_entity_id = 1000;
+    const entity_base_ids = [_]TestValuePtr{ 100, 200, 300, 400 };
+    var entities = try allocator.alloc(TestValuePtr, entity_base_ids.len);
+    defer allocator.free(entities);
     // -------------------
 
     for (0..index_pool.fields_list.len) |field_index| {
@@ -264,24 +268,24 @@ test "IndexPool" {
         const field_name = index_pool.fields_list[field_index];
 
         while (table_ptr < tables_max_count) : (table_ptr += 1) {
-            for (input, 0..) |value, i| {
-                input_table[i] = value + table_ptr;
+            for (entity_base_ids, 0..) |entity_base_id, i| {
+                entities[i] = entity_base_id + table_ptr; //generate different ids for each table
             }
 
             //==== Insert to Index Pool ====
-            try index_pool.insert(table_ptr, field_name, input_table);
+            try index_pool.insert(table_ptr, field_name, entities);
 
             var value_ptr: TestValuePtr = 0;
 
-            while (value_ptr < input.len) : (value_ptr += 1) {
+            while (value_ptr < entities.len) : (value_ptr += 1) {
                 
                 //==== Find on Index Pool ====
-                const find_lookup_value = try index_pool.find(field_name, input_table[value_ptr]);
+                const find_lookup_value = try index_pool.find(field_name, entities[value_ptr]);
                 try testing.expect(find_lookup_value.table_ptr == table_ptr);
                 try testing.expect(find_lookup_value.value_ptr == value_ptr);
             }
 
-            const not_found_value = index_pool.find(field_name, not_found_input + table_ptr);
+            const not_found_value = index_pool.find(field_name, not_found_entity_id + table_ptr);
 
             try testing.expectError(error.NotFound, not_found_value);
         }
