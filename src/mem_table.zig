@@ -161,7 +161,11 @@ pub fn MemTablePoolType(
 
                 inline while (field_meta_index < indexes_meta.len) : (field_meta_index += 1) {
                     //TODO: Necessary to check the efficiency of this method .slice().items()
-                    try mem_tables_pool.index_pool.insert(mem_tables_pool.active_table_ptr, indexes_meta[field_meta_index].field_name, active_table.entries.slice().items(entry_field_tags[field_meta_index]));
+                    try mem_tables_pool.index_pool.insert(
+                        mem_tables_pool.active_table_ptr,
+                        indexes_meta[field_meta_index].field_name,
+                        active_table.entries.slice().items(entry_field_tags[field_meta_index]),
+                    );
                 }
 
                 // Если мы заполнили все свободное место
@@ -242,16 +246,17 @@ const TestEntity = struct {
     };
 };
 
-fn testPreparingEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
+fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
     var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
-    var index: MemEntryPtr = 0;
+    var index: usize = 0;
 
     while (index < entries_total) : (index += 1) {
-        var entity: TestEntity = .{
+        const entity = try allocator.create(TestEntity);
+        entity.* = .{
             .order_id = index + 1,
             .product_id = index + 2,
         };
-        input_entries[index] = &entity;
+        input_entries[index] = entity;
     }
 
     return input_entries;
@@ -279,8 +284,12 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     // чтобы не заполнить все таблицы
     const entries_total = entries_max_count * mem_tables_max_count - 1;
 
-    const input_entries = try testPreparingEntries(allocator, entries_total);
-    defer allocator.free(input_entries);
+    const input_entries = try testPreparingUniqueEntries(allocator, entries_total);
+    defer {
+        for (input_entries) |entry| allocator.destroy(entry);
+        allocator.free(input_entries);
+    }
+
     // -------------------
 
     //==== General test ====
@@ -293,13 +302,83 @@ test "MemTablePool: (max count entries for all tables in pool) - 1" {
     try testing.expectEqual(mem_tables_max_count - 1, count_filled_tables);
     try testing.expectEqual(mem_tables_max_count - 1 - count_filled_tables, count_free_tables);
 
-    for (input_entries.items) |expected_entry| {
+    for (input_entries) |expected_entry| {
         const find_entry_by_order_id = try mem_table_pool.find("order_id", expected_entry.order_id);
         try testing.expectEqual(expected_entry.product_id, find_entry_by_order_id.product_id);
 
         const find_entry_by_product_id = try mem_table_pool.find("product_id", expected_entry.product_id);
         try testing.expectEqual(expected_entry.order_id, find_entry_by_product_id.order_id);
     }
+}
+
+test "MemTablePool: insert repeatable entries" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    const entries_max_count = 1;
+    const mem_tables_max_count = 6;
+    const MemTablePool = MemTablePoolType(
+        TestEntity,
+        TestEntity.indexes_meta,
+        mem_tables_max_count,
+        entries_max_count,
+    );
+    var mem_table_pool: *MemTablePool = try .init(allocator);
+    defer mem_table_pool.deinit(allocator);
+
+    // Preparing input data
+
+    // Максимальное количество entries,
+    // которое может вместить весь pool минус 1,
+    // чтобы не заполнить все таблицы
+    const entries_total = entries_max_count * mem_tables_max_count - 1;
+
+    const input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
+    defer allocator.free(input_entries);
+
+    defer {
+        for (input_entries) |entry| allocator.destroy(entry);
+    }
+
+    input_entries[0] = try allocator.create(TestEntity);
+    input_entries[1] = try allocator.create(TestEntity);
+    input_entries[2] = try allocator.create(TestEntity);
+    input_entries[3] = try allocator.create(TestEntity);
+    input_entries[4] = try allocator.create(TestEntity);
+
+    input_entries[0].* = .{
+        .order_id = 1,
+        .product_id = 10,
+    };
+
+    input_entries[1].* = .{
+        .order_id = 1,
+        .product_id = 20,
+    };
+
+    input_entries[2].* = .{
+        .order_id = 1,
+        .product_id = 30,
+    };
+
+    input_entries[3].* = .{
+        .order_id = 1,
+        .product_id = 40,
+    };
+
+     input_entries[4].* = .{
+        .order_id = 1,
+        .product_id = 50,
+    };
+
+
+    // -------------------
+
+    //==== General test ====
+
+    try mem_table_pool.insert(io, input_entries);
+
+    printObj("search", mem_table_pool.find("order_id", 1));
 }
 
 //TODO: chenge benchmark
@@ -325,7 +404,7 @@ test "benchmark MemPool" {
 
     // Preparing data
     const entries_total = entries_max_count * filled_tables_count;
-    const input_entries = try testPreparingEntries(allocator, entries_total);
+    const input_entries = try testPreparingUniqueEntries(allocator, entries_total);
     defer allocator.free(input_entries);
     // -------------------
 
@@ -351,7 +430,6 @@ test "benchmark MemPool" {
     );
     try testing.expect(diff_ms < 4000); //TODO: Need to research
 
-
     // ==== Find benchmark ====
     const lookups_total = 100_000;
 
@@ -365,7 +443,7 @@ test "benchmark MemPool" {
 
     diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
 
-        std.debug.print(
+    std.debug.print(
         \\
         \\ benchmark: MemPool find
         \\  entries: {d}

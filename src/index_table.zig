@@ -73,8 +73,6 @@ pub fn IndexTableType(
                 }
                 index_table.entries.putAssumeCapacity(keys[value_ptr], value_ptr);
             }
-
-
         }
 
         pub fn find(index_table: *IndexTable, key: Key) !LookupValue {
@@ -195,8 +193,10 @@ pub fn IndexPoolType(
 
         pub fn find(index_pool: *IndexPool, field_name: []const u8, field_value: anytype) !LookupValue {
             var field_index: u8 = 0;
+
             while (field_index < index_pool.fields_list.len) : (field_index += 1) {
                 if (std.mem.eql(u8, index_pool.fields_list[field_index], field_name)) {
+
                     for (index_pool.indexes_map[field_index]) |index_table_union| {
                         switch (index_table_union.*) {
                             .indexes_u32 => |index_table| {
