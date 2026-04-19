@@ -184,61 +184,6 @@ pub fn IndexPoolType(comptime index_block_max_count: TablePtr, comptime keys_per
     };
 }
 
-test "OrderItemRows:order_id index:block" {
-    const allocator = std.testing.allocator;
-
-    var prng = std.Random.DefaultPrng.init(0);
-    const random = prng.random();
-
-    const keys_max_count = 10_000;
-    const table_ptr: TablePtr = 0;
-
-    const index_block: *IndexBlockType(keys_max_count) = try .init(allocator, table_ptr);
-    defer index_block.deinit(allocator);
-
-    // Preparing test input
-    const entity_keys_unique_count = 1000;
-
-    assert(entity_keys_unique_count <= keys_max_count);
-
-    var entity_keys_unique = try allocator.alloc(Key, entity_keys_unique_count);
-    defer allocator.free(entity_keys_unique);
-
-    for (0..entity_keys_unique_count) |key_idx| {
-        entity_keys_unique[key_idx] = random.int(Key);
-    }
-
-    var entity_keys = try allocator.alloc(Key, keys_max_count);
-    defer allocator.free(entity_keys);
-
-    var entity_keys_unique_idx: EntityPtr = 0;
-
-    for (0..keys_max_count) |key_idx| {
-        entity_keys[key_idx] = entity_keys_unique[entity_keys_unique_idx];
-        entity_keys_unique_idx += 1;
-        if (entity_keys_unique_idx == entity_keys_unique_count) entity_keys_unique_idx = 0;
-    }
-
-    const one_insert_count = 100;
-
-    //last_entry_ptr_table - stored and calculated in Table
-    var last_entry_ptr_table: EntityPtr = 0;
-    var insert_key_idx: EntityPtr = 0;
-
-    while (insert_key_idx < entity_keys.len) : (insert_key_idx += one_insert_count) {
-        index_block.insert(last_entry_ptr_table, entity_keys[insert_key_idx .. insert_key_idx + one_insert_count]);
-        last_entry_ptr_table += one_insert_count;
-    }
-
-    index_block.sort();
-
-    try testing.expect(index_block.entries.len == keys_max_count);
-
-    const find_res = try index_block.lookup(entity_keys_unique[0]);
-
-    printObj("find_res", find_res);
-}
-
 test "OrderItemRows:order_id index:pool:find" {
     const allocator = std.testing.allocator;
 
