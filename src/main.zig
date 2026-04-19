@@ -1,7 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 const net = Io.net;
-const radix_sort = @import("radix_sort.zig");
+
 const Config = struct {
     port: u16 = 8019,
 };
