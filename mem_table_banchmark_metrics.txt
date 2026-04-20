@@ -1,75 +1,12 @@
-============================
-benchmark: MemPool insert
-  entries: 6_553_599
-  time:    3626 ms (3 s)
-  data:    104857600 bytes (~100 MiB)
-============================
-benchmark: MemPool find
-  entries: 6_553_599
-  lookups: 100000
-  time:    95 ms (0 s)
-  data:    104857600 bytes (~100 MiB)
-============================
+benchmark: MemTablePool insert
+  .total entities: 2560000
+  ...insert batch: 20
+  .....total time: 1720 ms (1 s)
+  ...total memory: 40960000 bytes (~39 MiB)
 
 
-   // Preparing data
-    // const entries_total = entities_max_count * filled_tables_count;
-    // const input_entries = try testPreparingUniqueEntries(allocator, entries_total);
-    // defer allocator.free(input_entries);
-    // -------------------
-
-    // //==== Insert benchmark ====
-    // const start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
-    // // try mem_table_pool.insert(io, input_entries);
-    // const diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
-    // std.debug.print(
-    //     \\
-    //     \\benchmark: MemPool insert
-    //     \\  entities: {d}
-    //     \\  time:    {d} ms ({d} s)
-    //     \\  data:    {d} bytes (~{d:.2} MiB)
-    //     \\
-    // ,
-    //     .{
-    //         input_entries.len,
-    //         diff_ms,
-    //         @divTrunc(diff_ms, 1000),
-    //         usage_memory_bytes,
-    //         usage_memory_mib,
-    //     },
-    // );
-    // try testing.expect(diff_ms < 4000); //TODO: Need to research
-
-    // // ==== Find benchmark ====
-    // const lookups_total = 100_000;
-
-    // start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
-    // for (input_entries[0..lookups_total]) |expected_entry| {
-    //     const entry_by_order_id = try mem_table_pool.find("order_id", expected_entry.order_id);
-    //     const entry_by_product_id = try mem_table_pool.find("product_id", expected_entry.product_id);
-    //     try testing.expectEqual(entry_by_product_id.product_id, entry_by_order_id.product_id);
-    //     try testing.expectEqual(entry_by_product_id.order_id, entry_by_order_id.order_id);
-    // }
-
-    // diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
-
-    // std.debug.print(
-    //     \\
-    //     \\ benchmark: MemPool find
-    //     \\  entities: {d}
-    //     \\  lookups: {d}
-    //     \\  time:    {d} ms ({d} s)
-    //     \\  data:    {d} bytes (~{d:.2} MiB)
-    //     \\
-    // ,
-    //     .{
-    //         input_entries.len,
-    //         lookups_total,
-    //         diff_ms,
-    //         @divTrunc(diff_ms, 1000),
-    //         usage_memory_bytes,
-    //         usage_memory_mib,
-    //     },
-    // );
-
-    // try testing.expect(diff_ms < 1000); //TODO: Need to research
+benchmark: MemTablePool lookup
+  .total entities: 2560000
+  ........lookups: 100000
+  .....total time: 3271 ms (3 s)
+  ...total memory: 40960000 bytes (~39 MiB)

@@ -6,8 +6,8 @@ const assert = std.debug.assert;
 const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
-const TablePtr = @import("mem_table.zig").MemTablePtr;
-const EntityPtr = @import("mem_table.zig").MemEntryPtr;
+const TablePtr = @import("order_item_table.zig").MemTablePtr;
+const EntityPtr = @import("order_item_table.zig").MemEntryPtr;
 
 pub const Key = u32;
 //TODO: need to research for type naming 
@@ -31,7 +31,7 @@ pub const BlockLookupValue = struct {
     entity_ptr_list: []*IndexValue,
 };
 
-const PoolLookupResult = std.ArrayList(BlockLookupValue);
+pub const PoolLookupResult = std.ArrayList(BlockLookupValue);
 
 pub fn IndexBlockType(comptime keys_max_count: EntityPtr) type {
     return struct {
@@ -164,6 +164,10 @@ pub fn IndexPoolType(
 
         pub fn insert(index_pool: *IndexPool, table_ptr: TablePtr, entry_table_count: EntityPtr, keys: []Key) void {
             index_pool.blocks[table_ptr].insert(entry_table_count, keys);
+        }
+
+        pub fn sort(index_pool: *IndexPool, table_ptr: TablePtr) void {
+            index_pool.blocks[table_ptr].sort();
         }
 
         pub fn lookup(index_pool: *IndexPool, key: Key) !*PoolLookupResult {
