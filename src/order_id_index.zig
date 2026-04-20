@@ -6,11 +6,12 @@ const assert = std.debug.assert;
 const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
+const TablePtr = @import("mem_table.zig").MemTablePtr;
+const EntityPtr = @import("mem_table.zig").MemEntryPtr;
 
 pub const Key = u32;
-const EntityPtr = u32;
-const TablePtr = u32;
-const IndexPtr = u8;
+//TODO: need to research for type naming 
+const IndexPtr = TablePtr;
 
 const IndexValue = struct {
     key: Key,
@@ -38,7 +39,7 @@ pub fn IndexBlockType(comptime keys_max_count: EntityPtr) type {
 
         table_ptr: TablePtr,
         entries: []*IndexValue,
-        next_entry_index: TablePtr,
+        next_entry_index: EntityPtr,
         has_keys: bool,
         min_key: Key,
         max_key: Key,
@@ -123,7 +124,9 @@ pub fn IndexBlockType(comptime keys_max_count: EntityPtr) type {
     };
 }
 
-pub fn IndexPoolType(comptime index_block_max_count: TablePtr, comptime keys_per_block: EntityPtr) type {
+pub fn IndexPoolType(
+    comptime index_block_max_count: TablePtr,
+    comptime keys_per_block: EntityPtr,) type {
     return struct {
         const IndexPool = @This();
         const IndexBlock = IndexBlockType(keys_per_block);
@@ -134,13 +137,14 @@ pub fn IndexPoolType(comptime index_block_max_count: TablePtr, comptime keys_per
         //only for sigle-thread mode, use many result instances in multi-thread mode
         lookup_result: PoolLookupResult,
 
-        pub fn init(allocator: std.mem.Allocator, table_ptr_list: [index_block_max_count]TablePtr) !*IndexPool {
+        pub fn init(allocator: std.mem.Allocator, table_ptr_range: struct {TablePtr, TablePtr}) !*IndexPool {
             var index_pool = try allocator.create(IndexPool);
             index_pool.sorted = false;
 
             index_pool.blocks = try allocator.alloc(*IndexBlock, index_block_max_count);
+            var table_ptr: TablePtr = table_ptr_range[0];
 
-            for (table_ptr_list) |table_ptr| {
+            while (table_ptr < table_ptr_range[1]): (table_ptr += 1) {
                 index_pool.blocks[table_ptr] = try .init(allocator, table_ptr);
             }
 

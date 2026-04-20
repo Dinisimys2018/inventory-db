@@ -13,7 +13,7 @@ const printObj = @import("utils/debug.zig").printObj;
 
 const IndexPoolType = @import("index_table.zig").IndexPoolType;
 
-pub const MemTablePtr = u8;
+pub const MemTablePtr = u32;
 pub const MemEntryPtr = u32;
 // TODO: возможно MemTableType можно перенести внутри MemTablePoolType
 pub fn MemTableType(comptime EntryType: type, comptime entries_max_count: MemEntryPtr) type {
@@ -49,17 +49,6 @@ pub fn MemTableType(comptime EntryType: type, comptime entries_max_count: MemEnt
         }
 
         pub fn insert(mem_table: *MemTable, io: std.Io, entries: []*EntryType) void {
-            // TODO: syscall for getting time
-            // If usinge unique time_label for each entry, need to check next variant:
-            // fn rdtsc() u64 {
-            //     var lo: u32 = undefined;
-            //     var hi: u32 = undefined;
-            //     asm volatile ("rdtsc"
-            //         : [lo] "={eax}" (lo),
-            //           [hi] "={edx}" (hi),
-            //     );
-            //     return (@as(u64, hi) << 32) | lo;
-            // }
             const time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
 
             for (entries) |entry| {
@@ -248,7 +237,7 @@ const TestEntity = struct {
 
 fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
     var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
-    var index: usize = 0;
+    var index: MemEntryPtr = 0;
 
     while (index < entries_total) : (index += 1) {
         const entity = try allocator.create(TestEntity);
