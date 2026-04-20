@@ -11,9 +11,9 @@ const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const OrderIdKey = @import("order_id_index.zig").Key;
-const OrderIdIndexPoolType = @import("order_id_index.zig").IndexPoolType;
-const OrderIdPoolLookupResult = @import("order_id_index.zig").PoolLookupResult;
+//TODO use reflection from entity struct instead of u32
+const OrderIdIndex = @import("non_unique_mem_index.zig").NonUniqueMemIndexType(u32);
+const ProductIdIndex = @import("non_unique_mem_index.zig").NonUniqueMemIndexType(u32);
 
 const EntityType = @import("entities.zig").OrderItem;
 
@@ -61,26 +61,29 @@ pub fn MemTablePoolType(
 ) type {
     const FieldEntry = std.MultiArrayList(EntityType).Field;
     // Reflection
+    const IndexFieldTags = struct {
+        order_id: FieldEntry,
+        product_id: FieldEntry,
+    };
 
-    const index_field_tags: [2]FieldEntry = blk: {
-        var tmp_index_field_tags: [2]FieldEntry = undefined;
-        tmp_index_field_tags[0] = std.meta.stringToEnum(FieldEntry, "order_id") orelse unreachable;
-        tmp_index_field_tags[1] = std.meta.stringToEnum(FieldEntry, "product_id") orelse unreachable;
-        break :blk tmp_index_field_tags;
+    const index_field_tags: IndexFieldTags = .{
+        .order_id = std.meta.stringToEnum(FieldEntry, "order_id") orelse unreachable,
+        .product_id = std.meta.stringToEnum(FieldEntry, "product_id") orelse unreachable,
     };
 
     return struct {
         const MemTablePool = @This();
         const MemTable = MemTableType(entities_max_count);
         const TableList = []*MemTable;
-        const OrderIdIndexPool = OrderIdIndexPoolType(tables_max_count, entities_max_count);
 
         // Struct Fields
         tables: TableList,
         free_table_ptrs: [tables_max_count]bool,
         filled_table_ptrs: [tables_max_count]bool,
         active_table_ptr: MemTablePtr = 0,
-        order_id_index_pool: *OrderIdIndexPool,
+        order_id_index_pool: *OrderIdIndex.IndexPoolType(tables_max_count, entities_max_count),
+        product_id_index_pool: *ProductIdIndex.IndexPoolType(tables_max_count, entities_max_count),
+
 
         pub fn init(allocator: std.mem.Allocator) !*MemTablePool {
             var mem_table_pool = try allocator.create(MemTablePool);
@@ -96,6 +99,7 @@ pub fn MemTablePoolType(
             }
 
             mem_table_pool.order_id_index_pool = try .init(allocator, .{0, tables_max_count});
+            mem_table_pool.product_id_index_pool = try .init(allocator, .{0, tables_max_count});
 
             return mem_table_pool;
         }
@@ -107,6 +111,8 @@ pub fn MemTablePoolType(
 
             allocator.free(table_pool.tables);
             table_pool.order_id_index_pool.deinit(allocator);
+            table_pool.product_id_index_pool.deinit(allocator);
+
             allocator.destroy(table_pool);
         }
 
@@ -141,13 +147,25 @@ pub fn MemTablePoolType(
                 table_pool.order_id_index_pool.insert(
                     table_pool.active_table_ptr,
                     entity_count_before_insert,
-                    active_table.entities.slice().items(index_field_tags[0])[entity_count_before_insert..],
+                    active_table.entities.slice().items(index_field_tags.order_id)[entity_count_before_insert..],
                 );
 
                 //TODO: need to optimize sort for many records
                 // maybe move to high level for one sort call 
                 table_pool.order_id_index_pool.sort(table_pool.active_table_ptr);
 
+
+                //TODO: Necessary to check the efficiency of this method .slice().items()
+                table_pool.product_id_index_pool.insert(
+                    table_pool.active_table_ptr,
+                    entity_count_before_insert,
+                    active_table.entities.slice().items(index_field_tags.product_id)[entity_count_before_insert..],
+                );
+                //TODO: need to optimize sort for many records
+                // maybe move to high level for one sort call 
+                table_pool.product_id_index_pool.sort(table_pool.active_table_ptr);
+
+            
                 // Если мы заполнили все свободное место
                 // значит перемещаем активную таблицу в filled_table_ptrs
                 if (rest == entries_end - entries_start) {
@@ -170,7 +188,7 @@ pub fn MemTablePoolType(
             }
         }
 
-        pub fn lookupByOrderId(table_pool: *MemTablePool, key: OrderIdKey) !*OrderIdPoolLookupResult {
+        pub fn lookupByOrderId(table_pool: *MemTablePool, key: OrderIdIndex.Key) !*OrderIdIndex.PoolLookupResult {
             return table_pool.order_id_index_pool.lookup(key);
         }
 
@@ -389,19 +407,6 @@ test "benchmark MemTablePool" {
     var diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
         std.debug.print(
         \\
-        \\ {
-        \\  "title": "OrderItem MemTablePool",
-        \\  "action": "insert",
-        \\  "data": {
-        \\     "total_entities": {d},
-        \\     "lookups": {d},
-        \\     "time_ms": {d},
-        \\     "time_s": {d},
-        \\     "mem_b": {d},
-        \\     "mem_mib": {d}
-        \\  }
-        \\ }
-        \\
         \\benchmark: MemPool insert
         \\  .total entities: {d}
         \\  ...insert batch: {d}
@@ -434,18 +439,13 @@ test "benchmark MemTablePool" {
 
     std.debug.print(
         \\
-        \\ {
-        \\  "title": "OrderItem MemTablePool",
-        \\  "action": "lookup",
-        \\  "data": {
-        \\     "total_entities": {d},
-        \\     "lookups": {d},
-        \\     "time_ms": {d},
-        \\     "time_s": {d},
-        \\     "mem_b": {d},
-        \\     "mem_mib": {d}
-        \\  }
-        \\ }
+        \\
+        \\benchmark: MemPool lookup
+        \\  .total entities: {d}
+        \\  ..total_lookups: {d}
+        \\  .....total time: {d} ms ({d} s)
+        \\  ...total memory: {d} bytes (~{d:.2} MiB)
+        \\
     ,
         .{
             input_entries.len,
