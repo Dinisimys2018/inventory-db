@@ -6,6 +6,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 
 const printObj = @import("utils/debug.zig").printObj;
+const stdx_sort = @import("sort.zig");
 
 const TablePtr = @import("order_item_mem_table.zig").MemTablePtr;
 const EntityPtr = @import("order_item_mem_table.zig").MemEntryPtr;
@@ -15,15 +16,16 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
         pub const Key = KeyType;
 
         const IndexValue = struct {
-            key: Key,
-            entity_ptr: EntityPtr,
+            key: Key = 0,
+            entity_ptr: EntityPtr = 0,
 
             pub fn compareKeys(target_key: Key, index_value: *IndexValue) std.math.Order {
                 return std.math.order(target_key, index_value.key);
             }
 
             pub fn lessThan(_: @TypeOf(.{}), a: *IndexValue, b: *IndexValue) bool {
-                return a.key < b.key;
+                if (a.key == b.key) return a.entity_ptr > b.entity_ptr;
+                return a.key > b.key;
             }
         };
 
@@ -59,6 +61,8 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                     var entry_idx: EntityPtr = 0;
                     while (entry_idx < keys_max_count) : (entry_idx += 1) {
                         index_block.entries[entry_idx] = try allocator.create(IndexValue);
+                        index_block.entries[entry_idx].key = 0;
+                        index_block.entries[entry_idx].entity_ptr = 0;
                     }
 
                     return index_block;
@@ -113,8 +117,8 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
 
                 pub fn lookup(index_block: *IndexBlock, key: anytype) !BlockLookupValue {
                     assert(index_block.sorted);
+                    const range = stdx_sort.equalRangeDesc(*IndexValue, index_block.entries, key, IndexValue.compareKeys);
 
-                    const range = std.sort.equalRange(*IndexValue, index_block.entries, key, IndexValue.compareKeys);
                     if (range[1] == 0) return error.NotFound;
 
                     return .{
@@ -181,10 +185,12 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                     while (last_indx > 0) {
                         last_indx -= 1;
                         if (key >= index_pool.blocks[last_indx].min_key and key <= index_pool.blocks[last_indx].max_key) {
-                            const block_result = index_pool.blocks[last_indx].lookup(key) catch unreachable;
+                            const block_result = index_pool.blocks[last_indx].lookup(key) catch continue;
+
                             index_pool.lookup_result.appendAssumeCapacity(block_result);
                         }
                     }
+
 
                     if (index_pool.lookup_result.items.len > 0) return &index_pool.lookup_result;
 
@@ -204,45 +210,64 @@ test "NonUniqueMemIndexType: pool: insert and lookup" {
     const Key = u32;
     const NonUniqueMemIndexU32 = NonUniqueMemIndexType(Key);
 
-    const index_pool: *NonUniqueMemIndexU32.IndexPoolType(table_ptr_list.len, keys_per_block) = try .init(allocator, .{0,2});
+    const index_pool: *NonUniqueMemIndexU32.IndexPoolType(table_ptr_list.len, keys_per_block) = try .init(allocator, .{ 0, 2 });
     defer index_pool.deinit(allocator);
 
-    //                     entity ptrs => |0, 1, 2, 3, 4|
+    //                     entity ptrs => |0, 1, 2, 3, 4 |
     var keys_first_table = [_]Key{ 1, 1, 3, 3, 2 };
 
-    //                      entity ptrs => |0, 1, 2, 3, 4|
+    //                      entity ptrs => |0, 1, 2, 3, 4 |
     var keys_second_table = [_]Key{ 2, 1, 9, 2, 2 };
+
+    const ExpectedLookupResult = struct {
+        table_ptr: TablePtr,
+        entity_ptrs: []const EntityPtr,
+    };
 
     const Case = struct {
         key: Key,
-        table_entity_ptrs: []const []const EntityPtr,
+        expected_lookup_result: []const ExpectedLookupResult,
     };
 
     const cases = [_]Case{
         .{
             .key = 1,
-            .table_entity_ptrs = &[_][]const EntityPtr{
-                &[_]EntityPtr{ 0, 1 },
-                &[_]EntityPtr{1},
+            .expected_lookup_result = &[_]ExpectedLookupResult{
+                
+                //     ptrs indexes  =>      0          <-- desc ordering
+                //                           ↓
+                //      entity ptrs  => | 0, 1, 2, 3, 4 |
+                // keys_second_table => { 2, 1, 9, 2, 2 }
+                //
+                // ⬇ desc ordering |idx = 0, table_ptr = second|
+                .{ .table_ptr = 1, .entity_ptrs = &[_]EntityPtr{ 1 }},  // |idx = 0, ptr = 1|
+
+                //     ptrs indexes =>   1  0          <-- desc ordering
+                //                       ↓  ↓
+                //      entity ptrs => | 0, 1, 2, 3, 4 |
+                // keys_first_table => { 1, 1, 3, 3, 2 }
+                //
+                // ⬇ desc ordering |idx = 1, table_ptr = first|
+                .{.table_ptr = 0, .entity_ptrs =  &[_]EntityPtr{ 1, 0 }} // |idx = 0, ptr = 1| , |idx = 1 , ptr = 0|
             },
         },
         .{
             .key = 2,
-            .table_entity_ptrs = &[_][]const EntityPtr{
-                &[_]EntityPtr{4},
-                &[_]EntityPtr{ 0, 3, 4 },
+            .expected_lookup_result = &[_]ExpectedLookupResult {
+                .{.table_ptr = 1, .entity_ptrs =  &[_]EntityPtr{ 4, 3, 0 },},
+                .{.table_ptr = 0, .entity_ptrs =  &[_]EntityPtr{ 4 },},
             },
         },
         .{
             .key = 3,
-            .table_entity_ptrs = &[_][]const EntityPtr{
-                &[_]EntityPtr{ 2, 3 },
+            .expected_lookup_result = &[_]ExpectedLookupResult{
+                .{.table_ptr = 0, .entity_ptrs =  &[_]EntityPtr{ 3, 2 },},
             },
         },
         .{
             .key = 9,
-            .table_entity_ptrs = &[_][]const EntityPtr{
-                &[_]EntityPtr{2},
+            .expected_lookup_result = &[_]ExpectedLookupResult{
+                .{.table_ptr = 1, .entity_ptrs =  &[_]EntityPtr{ 2 },},
             },
         },
     };
@@ -254,13 +279,17 @@ test "NonUniqueMemIndexType: pool: insert and lookup" {
 
     for (cases) |case| {
         const lookup_result = try index_pool.lookup(case.key);
-        for (case.table_entity_ptrs, 0..) |entity_ptrs, table_indx| {
-            if (entity_ptrs.len > 0) {
-                for (entity_ptrs, 0..) |entity_ptr, entity_indx| {
-                    try testing.expectEqual(entity_ptr, lookup_result.items[table_indx].entity_ptr_list[entity_indx].entity_ptr);
+
+        for (case.expected_lookup_result, 0..) |expected_res, table_idx| {
+
+                for (expected_res.entity_ptrs, 0..) |entity_ptr, entity_idx| {
+                    try testing.expectEqual(
+                        entity_ptr,
+                        lookup_result.items[table_idx].entity_ptr_list[entity_idx].entity_ptr,
+                    );
                 }
             }
-        }
+        
     }
 }
 
@@ -279,7 +308,7 @@ test "NonUniqueMemIndexType: pool: many entities" {
     const Key = u32;
     const NonUniqueMemIndexU32 = NonUniqueMemIndexType(Key);
 
-    const index_pool: *NonUniqueMemIndexU32.IndexPoolType(table_ptr_list.len, keys_per_block) = try .init(allocator, .{0,table_ptr_list.len});
+    const index_pool: *NonUniqueMemIndexU32.IndexPoolType(table_ptr_list.len, keys_per_block) = try .init(allocator, .{ 0, table_ptr_list.len });
     defer index_pool.deinit(allocator);
 
     // Preparing test input
@@ -324,8 +353,13 @@ test "NonUniqueMemIndexType: pool: many entities" {
         const lookup_result = try index_pool.lookup(key);
 
         try testing.expectEqual(table_ptr_list.len, lookup_result.items.len);
-        for (lookup_result.items, 0..) |block, i| {
-            try testing.expectEqual(table_ptr_list[i], block.table_ptr);
+        //Desc ordering on results
+        var table_idx_expect: u32 = table_ptr_list.len;
+
+        for (lookup_result.items) |block| {
+            table_idx_expect -= 1;
+
+            try testing.expectEqual(table_ptr_list[table_idx_expect], block.table_ptr);
             try testing.expect(block.entity_ptr_list.len > 0);
         }
     }
