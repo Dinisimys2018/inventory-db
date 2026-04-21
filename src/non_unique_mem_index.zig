@@ -176,9 +176,12 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                     //TODO: P3 need to check how we can clear result not before lookup, but after this
                     index_pool.lookup_result.clearRetainingCapacity();
 
-                    for (index_pool.blocks) |index_block| {
-                        if (key >= index_block.min_key and key <= index_block.max_key) {
-                            const block_result = index_block.lookup(key) catch unreachable;
+                    var last_indx = index_pool.blocks.len;
+
+                    while (last_indx > 0) {
+                        last_indx -= 1;
+                        if (key >= index_pool.blocks[last_indx].min_key and key <= index_pool.blocks[last_indx].max_key) {
+                            const block_result = index_pool.blocks[last_indx].lookup(key) catch unreachable;
                             index_pool.lookup_result.appendAssumeCapacity(block_result);
                         }
                     }

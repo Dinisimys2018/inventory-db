@@ -1,25 +1,30 @@
 benchmark: MemPool insert
   .....mem tables: 10000
-  .total entities: 2560000
+  .total entities: 1700000
   ...insert batch: 20
-  .....total time: 3078 ms (3 s)
-  ...total memory: 40960000 bytes (~39 MiB)
+  .....total time: 1834 ms (1 s)
+  ...total memory: 40800000 bytes (~38 MiB)
 
 
 benchmark: MemPool lookupByOrderId
   .....mem tables: 10000
-  .total entities: 2560000
-  ..total_lookups: 160000
-  .....total time: 6404 ms (6 s)
-  ...total memory: 40960000 bytes (~39 MiB)
+  .total entities: 1700000
+  ..total_lookups: 106250
+  .....total time: 4894 ms (4 s)
+  ...total memory: 40800000 bytes (~38 MiB)
 
 
 benchmark: MemPool lookupByProductId
   .....mem tables: 10000
-  .total entities: 2560000
-  ..total_lookups: 160000
-  .....total time: 5790 ms (5 s)
-  ...total memory: 40960000 bytes (~39 MiB)
+  .total entities: 1700000
+  ..total_lookups: 106250
+  .....total time: 4761 ms (4 s)
+  ...total memory: 40800000 bytes (~38 MiB)
 
 
-  
+benchmark: MemPool lookupByOrderIdAndProductId
+  .....mem tables: 10000
+  .total entities: 1700000
+  ..total_lookups: 106250
+  .....total time: 4406 ms (4 s)
+  ...total memory: 40800000 bytes (~38 MiB)
