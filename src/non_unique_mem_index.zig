@@ -32,7 +32,7 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
             entity_ptr_list: []*IndexValue,
         };
 
-        pub const PoolLookupResult = std.ArrayList(BlockLookupValue);
+        pub const LookupResult = std.ArrayList(BlockLookupValue);
 
         pub fn IndexBlockType(comptime keys_max_count: EntityPtr) type {
             return struct {
@@ -137,7 +137,7 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                 blocks: []*IndexBlock,
                 sorted: bool,
                 //only for sigle-thread mode, use many result instances in multi-thread mode
-                lookup_result: PoolLookupResult,
+                lookup_result: LookupResult,
 
                 pub fn init(allocator: std.mem.Allocator, table_ptr_range: struct { TablePtr, TablePtr }) !*IndexPool {
                     var index_pool = try allocator.create(IndexPool);
@@ -172,7 +172,8 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                     index_pool.blocks[table_ptr].sort();
                 }
 
-                pub fn lookup(index_pool: *IndexPool, key: Key) !*PoolLookupResult {
+                pub fn lookup(index_pool: *IndexPool, key: Key) !*const LookupResult {
+                    //TODO: P3 need to check how we can clear result not before lookup, but after this
                     index_pool.lookup_result.clearRetainingCapacity();
 
                     for (index_pool.blocks) |index_block| {
@@ -182,9 +183,7 @@ pub fn NonUniqueMemIndexType(comptime KeyType: type) type {
                         }
                     }
 
-                    if (index_pool.lookup_result.items.len != 0) {
-                        return &index_pool.lookup_result;
-                    }
+                    if (index_pool.lookup_result.items.len > 0) return &index_pool.lookup_result;
 
                     return error.NotFound;
                 }

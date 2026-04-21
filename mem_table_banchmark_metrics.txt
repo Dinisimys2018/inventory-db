@@ -1,28 +1,25 @@
-====One non-unique index
 benchmark: MemPool insert
-  .total entities: 2_560_000
+  .....mem tables: 10000
+  .total entities: 2560000
   ...insert batch: 20
-  .....total time: 1704 ms (1 s)
+  .....total time: 3078 ms (3 s)
   ...total memory: 40960000 bytes (~39 MiB)
 
 
-benchmark: MemPool lookup
-  .total entities: 2_560_000
-  ..total_lookups: 100_000
-  .....total time: 2544 ms (2 s)
-  ...total memory: 40960000 bytes (~39 MiB)
-====
-
-====Two non-unique indexes
-benchmark: MemPool insert
-  .total entities: 2_560_000
-  ...insert batch: 20
-  .....total time: 3175 ms (3 s)
+benchmark: MemPool lookupByOrderId
+  .....mem tables: 10000
+  .total entities: 2560000
+  ..total_lookups: 160000
+  .....total time: 6404 ms (6 s)
   ...total memory: 40960000 bytes (~39 MiB)
 
 
-benchmark: MemPool lookup
-  .total entities: 2_560_000
-  ..total_lookups: 100_000
-  .....total time: 3787 ms (3 s)
+benchmark: MemPool lookupByProductId
+  .....mem tables: 10000
+  .total entities: 2560000
+  ..total_lookups: 160000
+  .....total time: 5790 ms (5 s)
   ...total memory: 40960000 bytes (~39 MiB)
+
+
+  
