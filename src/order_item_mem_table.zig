@@ -167,20 +167,16 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
             return range;
         }
 
-        pub fn lookupByOrderIdAndProductId(mem_table: *MemTable, key: EntityType.ProductId) !EntitiesRange {
-            assert(!mem_table.primary_sorted);
-
-            const range = std.sort.binarySearch(
-                EntityType.ProductId,
-                mem_table.entities.slice().items(index_field_tags.product_id),
-                key,
-                stdx_sort.compareNumberKeys(EntityType.ProductId),
-            );
-
-            if (range[1] == 0) return error.NotFound;
-
-            return range;
+        pub fn compareByOrderIdAndProductId(first: EntityType, second: EntityType) std.math.Order {
+        if (first.order_id < second.order_id) return .lt;
+        if (first.order_id > second.order_id) return .gt;
+        if (first.order_id == second.order_id) {
+            if (first.product_id == second.product_id) return .eq;
+            if (first.product_id < second.product_id) return .lt;
+            if (first.product_id > second.product_id) return .gt;
         }
+        unreachable;
+    }
         
     };
 }
@@ -506,105 +502,6 @@ test "MemTablePool: (max count entities for all tables in pool) - 1" {
     try testing.expectEqual(tables_max_count - 1 - count_filled_tables, count_free_tables);
 }
 
-// test "MemTablePool: lookupByOrderIdAndProductId" {
-//     const allocator = std.testing.allocator;
-//     const io = std.testing.io;
-
-//     const entities_max_count = 3;
-//     const tables_max_count = 10;
-
-//     const MemTablePool = MemTablePoolType(
-//         tables_max_count,
-//         entities_max_count,
-//     );
-
-//     var mem_table_pool: *MemTablePool = try .init(allocator);
-//     defer mem_table_pool.deinit(allocator);
-
-//     // Preparing input data
-
-//     const entries_total = 7;
-
-//     const input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
-//     defer allocator.free(input_entries);
-
-//     defer {
-//         for (input_entries) |entry| allocator.destroy(entry);
-//     }
-
-//     var entry_ptr: MemEntryPtr = 0;
-//     while (entry_ptr < entries_total) : (entry_ptr += 1) {
-//         input_entries[entry_ptr] = try allocator.create(TestEntity);
-//     }
-
-//     input_entries[0].* = .{
-//         .order_id = 1,
-//         .product_id = 10,
-//         .quantity = 1,
-//     };
-
-//     input_entries[1].* = .{
-//         .order_id = 1,
-//         .product_id = 10,
-//         .quantity = 2,
-//     };
-
-//     input_entries[2].* = .{
-//         .order_id = 1,
-//         .product_id = 10,
-//         .quantity = 3,
-//     };
-
-//     input_entries[3].* = .{
-//         .order_id = 1,
-//         .product_id = 10,
-//         .quantity = 4,
-//     };
-
-//     input_entries[4].* = .{
-//         .order_id = 1,
-//         .product_id = 10,
-//         .quantity = 5,
-//     };
-
-//     input_entries[5].* = .{
-//         .order_id = 1,
-//         .product_id = 20,
-//         .quantity = 6,
-//     };
-
-//     input_entries[6].* = .{
-//         .order_id = 2,
-//         .product_id = 10,
-//         .quantity = 7,
-//     };
-
-//     // -------------------
-
-//     //==== General test ====
-//     const map_size: u32 = @intCast(input_entries.len);
-
-//     var expected_map: std.AutoHashMapUnmanaged(struct { OrderIdIndex.Key, ProductIdIndex.Key }, u32) = .empty;
-//     try expected_map.ensureTotalCapacity(allocator, map_size);
-//     defer expected_map.deinit(allocator);
-
-//     for (input_entries) |entry| {
-//         //Each put will be rewrite "quantity" to actual value
-//         expected_map.putAssumeCapacity(.{ entry.order_id, entry.product_id }, entry.quantity);
-//     }
-
-//     try mem_table_pool.insert(io, input_entries);
-
-//     for (input_entries) |entry| {
-//         const lookup_entity = try mem_table_pool.lookupByOrderIdAndProductId(
-//             entry.order_id,
-//             entry.product_id,
-//         );
-//         const expected_quantity = expected_map.get(.{ entry.order_id, entry.product_id }) orelse unreachable;
-//         try testing.expectEqual(expected_quantity, lookup_entity.quantity);
-//     }
-// }
-
 test "MemTablePool: lookupByOrderId" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -819,7 +716,7 @@ test "benchmark MemTablePool" {
     const one_table_memory = page_cache;
     const one_entity_size = @sizeOf(TestEntity);
     const entities_max_count: MemEntryPtr = @intCast(one_table_memory / one_entity_size);
-    const filled_tables_count: MemTablePtr = 10000;
+    const filled_tables_count: MemTablePtr = 10_000;
     const tables_max_count: MemTablePtr = filled_tables_count + 1;
 
     const MemTablePool = MemTablePoolType(
@@ -915,35 +812,35 @@ test "benchmark MemTablePool" {
         },
     );
 
-    // start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
-    // for (input_entries[0..lookups_total]) |expected_entry| {
-    //     _ = try mem_table_pool.lookupByProductId(expected_entry.product_id);
-    //     // TODO P2 add testing expect
-    // }
+    start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
+    for (input_entries[0..lookups_total]) |expected_entry| {
+        _ = try mem_table_pool.lookupByProductId(expected_entry.product_id);
+        // TODO P2 add testing expect
+    }
 
-    // diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
+    diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
 
-    // std.debug.print(
-    //     \\
-    //     \\
-    //     \\benchmark: MemPool lookupByProductId
-    //     \\  .....mem tables: {d}
-    //     \\  .total entities: {d}
-    //     \\  ..total_lookups: {d}
-    //     \\  .....total time: {d} ms ({d} s)
-    //     \\  ...total memory: {d} bytes (~{d:.2} MiB)
-    //     \\
-    // ,
-    //     .{
-    //         filled_tables_count,
-    //         input_entries.len,
-    //         lookups_total,
-    //         diff_ms,
-    //         @divTrunc(diff_ms, 1000),
-    //         usage_memory_b,
-    //         usage_memory_mib,
-    //     },
-    // );
+    std.debug.print(
+        \\
+        \\
+        \\benchmark: MemPool lookupByProductId
+        \\  .....mem tables: {d}
+        \\  .total entities: {d}
+        \\  ..total_lookups: {d}
+        \\  .....total time: {d} ms ({d} s)
+        \\  ...total memory: {d} bytes (~{d:.2} MiB)
+        \\
+    ,
+        .{
+            filled_tables_count,
+            input_entries.len,
+            lookups_total,
+            diff_ms,
+            @divTrunc(diff_ms, 1000),
+            usage_memory_b,
+            usage_memory_mib,
+        },
+    );
 
     // start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
     // for (input_entries[0..lookups_total]) |expected_entry| {

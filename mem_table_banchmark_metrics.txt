@@ -1,3 +1,7 @@
+// With separate Index Table
+// Sorting based on std.sort.block() in each IndexTable
+// Not working sort on time_label, problem with get last actual entities
+
 benchmark: MemPool insert
   .....mem tables: 10000
   .total entities: 1700000
@@ -27,4 +31,30 @@ benchmark: MemPool lookupByOrderIdAndProductId
   .total entities: 1700000
   ..total_lookups: 106250
   .....total time: 4406 ms (4 s)
+  ...total memory: 40800000 bytes (~38 MiB)
+
+// Without separate Index Table
+// Sorting based on MultiArrayList sort() in each MemTable
+// Sort based on time_label, so we can get last actual entity
+  benchmark: MemPool insert
+  .....mem tables: 10000
+  .total entities: 1700000
+  ...insert batch: 20
+  .....total time: 52886 ms (52 s)
+  ...total memory: 40800000 bytes (~38 MiB)
+
+
+benchmark: MemPool lookupByOrderId
+  .....mem tables: 10000
+  .total entities: 1700000
+  ..total_lookups: 106250
+  .....total time: 3725 ms (3 s)
+  ...total memory: 40800000 bytes (~38 MiB)
+
+
+benchmark: MemPool lookupByProductId
+  .....mem tables: 10000
+  .total entities: 1700000
+  ..total_lookups: 106250
+  .....total time: 3650 ms (3 s)
   ...total memory: 40800000 bytes (~38 MiB)
