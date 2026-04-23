@@ -1,6 +1,16 @@
 const std = @import("std");
 const assert = std.debug.assert;
 
+pub fn compareNumberKeys(comptime Key: type) fn (first: Key, second: Key) std.math.Order {
+    const inner = struct {
+        pub fn compare(first: Key, second: Key) std.math.Order {
+            return std.math.order(first, second);
+        }
+    };
+
+    return inner.compare;
+}
+
 pub fn equalRangeDesc(
     comptime T: type,
     items: []const T,
@@ -43,7 +53,6 @@ pub fn equalRangeDesc(
     return .{ start, left };
 }
 
-
 test "equalRangeDesc with struct" {
     const TestValue = struct {
         key: u32,
@@ -54,12 +63,12 @@ test "equalRangeDesc with struct" {
         .{ .key = 10, .value = 1 },
         .{ .key = 10, .value = 2 },
         .{ .key = 10, .value = 3 },
-        .{ .key = 8,  .value = 4 },
-        .{ .key = 8,  .value = 5 },
-        .{ .key = 8,  .value = 6 },
-        .{ .key = 7,  .value = 7 },
-        .{ .key = 7,  .value = 8 },
-        .{ .key = 7,  .value = 9 },
+        .{ .key = 8, .value = 4 },
+        .{ .key = 8, .value = 5 },
+        .{ .key = 8, .value = 6 },
+        .{ .key = 7, .value = 7 },
+        .{ .key = 7, .value = 8 },
+        .{ .key = 7, .value = 9 },
     };
 
     const compareFn = struct {
@@ -87,7 +96,6 @@ test "equalRangeDesc with struct" {
     const r4 = equalRangeDesc(TestValue, &items, @as(u32, 9), compareFn);
     try std.testing.expectEqual(0, r4[0]);
     try std.testing.expectEqual(0, r4[1]);
-
 
     // key менший за всі (5) → відсутній
     const r5 = equalRangeDesc(TestValue, &items, @as(u32, 5), compareFn);
