@@ -36,11 +36,12 @@ benchmark: MemPool lookupByOrderIdAndProductId
 // Without separate Index Table
 // Sorting based on MultiArrayList sort() in each MemTable
 // Sort based on time_label, so we can get last actual entity
-  benchmark: MemPool insert
+
+benchmark: MemPool insert
   .....mem tables: 10000
   .total entities: 1700000
   ...insert batch: 20
-  .....total time: 52886 ms (52 s)
+  .....total time: 35880 ms (35 s)         <---- BAD SCORE
   ...total memory: 40800000 bytes (~38 MiB)
 
 
@@ -48,7 +49,7 @@ benchmark: MemPool lookupByOrderId
   .....mem tables: 10000
   .total entities: 1700000
   ..total_lookups: 106250
-  .....total time: 3725 ms (3 s)
+  .....total time: 4508 ms (4 s)
   ...total memory: 40800000 bytes (~38 MiB)
 
 
@@ -56,5 +57,5 @@ benchmark: MemPool lookupByProductId
   .....mem tables: 10000
   .total entities: 1700000
   ..total_lookups: 106250
-  .....total time: 3650 ms (3 s)
+  .....total time: 3827 ms (3 s)
   ...total memory: 40800000 bytes (~38 MiB)

@@ -135,7 +135,7 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
         pub fn primarySort(mem_table: *MemTable) void {
             if (mem_table.primary_sorted) return;
 
-            mem_table.entities.sort(SortCtx{ .entities = mem_table.entities });
+            mem_table.entities.sortUnstable(SortCtx{ .entities = mem_table.entities });
         }
 
         pub fn lookupByOrderId(mem_table: *MemTable, key: EntityType.OrderId) !EntitiesRange {
@@ -776,6 +776,14 @@ test "benchmark MemTablePool" {
             usage_memory_mib,
         },
     );
+
+    // start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
+    // for (mem_table_pool.tables) |table| {
+    //     table.primarySort();
+    // }
+
+    // diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
+    // printObj("SORT TIME ALL IN ONE", .{ .diff_ms = diff_ms, .sec = @divTrunc(diff_ms, 1000),});
 
     const lookups_total = input_entries.len / 16;
 
