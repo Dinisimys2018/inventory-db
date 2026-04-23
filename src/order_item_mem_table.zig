@@ -27,15 +27,12 @@ const SortCtx = struct {
     pub fn lessThan(ctx: @This(), a_index: usize, b_index: usize) bool {
         const a = ctx.entities.get(a_index);
         const b = ctx.entities.get(b_index);
-        if (a.order_id == b.order_id and a.product_id == b.product_id) {
-            return a.time_label > b.time_label;
-        }
 
-        if (a.order_id == b.order_id) {
-            return a.product_id > b.product_id;
-        }
+        if (a.order_id != b.order_id) return a.order_id > b.order_id;
 
-        return a.order_id > b.order_id;
+        if (a.product_id != b.product_id) return a.product_id > b.product_id;
+
+        return a.time_label > b.time_label;
     }
 };
 
@@ -136,10 +133,12 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
             if (mem_table.primary_sorted) return;
 
             mem_table.entities.sortUnstable(SortCtx{ .entities = mem_table.entities });
+            mem_table.primary_sorted = true;
         }
 
         pub fn lookupByOrderId(mem_table: *MemTable, key: EntityType.OrderId) !EntitiesRange {
-            assert(!mem_table.primary_sorted);
+            mem_table.primarySort();
+            
             const range = stdx_sort.equalRangeDesc(
                 EntityType.OrderId,
                 mem_table.entities.slice().items(index_field_tags.order_id),
@@ -153,7 +152,10 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
         }
 
         pub fn lookupByProductId(mem_table: *MemTable, key: EntityType.ProductId) !EntitiesRange {
-            assert(!mem_table.primary_sorted);
+            if (! mem_table.primary_sorted) {
+                printObj("Sort in lookupByProductId", key);
+                mem_table.primarySort();
+            }
 
             const range = stdx_sort.equalRangeDesc(
                 EntityType.ProductId,
@@ -248,25 +250,9 @@ pub fn MemTablePoolType(
                 if (entries_end >= entities.len) {
                     entries_end = entities.len;
                 }
-                // Order:
-                // first step  - insert data
-                // second step - insert indexes
-                // So, we need save entity count in table for insert indexes before insert data
-                // const entity_count_before_insert: MemEntryPtr = @intCast(active_table.entities.len);
-
+        
                 const toInsert = entities[entries_start..entries_end];
                 next_time_label = active_table.insert(next_time_label, toInsert);
-
-                // //TODO: P4 Necessary to check the efficiency of this method .slice().items()
-                // table_pool.index_pool.insert(
-                //     table_pool.active_table_ptr,
-                //     entity_count_before_insert,
-                //     active_table.entities,
-                // );
-
-                // //TODO: P3 need to optimize sort for many records
-                // // maybe move to high level for one sort call
-                // table_pool.order_id_index_pool.sort(table_pool.active_table_ptr);
 
                 // Если мы заполнили все свободное место
                 // значит перемещаем активную таблицу в filled_table_ptrs
@@ -291,8 +277,6 @@ pub fn MemTablePoolType(
 
                 entries_start = entries_end;
             }
-
-            active_table.primarySort();
         }
 
         pub fn getOne(
@@ -776,14 +760,6 @@ test "benchmark MemTablePool" {
             usage_memory_mib,
         },
     );
-
-    // start_ms = std.Io.Clock.awake.now(io).toMilliseconds();
-    // for (mem_table_pool.tables) |table| {
-    //     table.primarySort();
-    // }
-
-    // diff_ms = std.Io.Clock.awake.now(io).toMilliseconds() - start_ms;
-    // printObj("SORT TIME ALL IN ONE", .{ .diff_ms = diff_ms, .sec = @divTrunc(diff_ms, 1000),});
 
     const lookups_total = input_entries.len / 16;
 
