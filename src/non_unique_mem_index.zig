@@ -1,5 +1,11 @@
 //TODO: - change all errors to Error Enum Type
 
+///
+/// 
+///  DEPRECATED
+/// 
+/// 
+/// 
 const std = @import("std");
 const ArrayList = std.array_list;
 const assert = std.debug.assert;
