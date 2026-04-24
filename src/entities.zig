@@ -11,10 +11,7 @@ pub const OrderItem = struct {
     order_id: u32,
     product_id: u32,
     quantity: u32 = 0, //100_00 = 100.01
-    status: [256]u8 = undefined,
-    subject: [256]u8 = undefined,
-    terms: [256]u8 = undefined,
-    decription: [256]u8 = undefined,
+    status: []const u8 = "",
     // price: u32, //100_00 = 100.01
     // total: u32, //100_00 = 100.01
 };
