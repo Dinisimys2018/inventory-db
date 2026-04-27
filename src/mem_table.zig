@@ -60,6 +60,12 @@ pub const TableLookupResult = struct {
 };
 pub const LookupResult = std.ArrayList(TableLookupResult);
 
+pub const InsertState = enum {
+    ReadyToNext,
+    NeedToFlush,
+    Overflow,
+};
+
 pub fn MemTableType(entities_max_count: MemEntryPtr) type {
     return struct {
         const MemTable = @This();
@@ -229,7 +235,7 @@ pub fn MemTablePoolType(
             allocator.destroy(table_pool);
         }
 
-        pub fn insert(table_pool: *MemTablePool, io: std.Io, entities: []*EntityType) !void {
+        pub fn insert(table_pool: *MemTablePool, io: std.Io, entities: []*EntityType) !usize {
             var entries_start: usize = 0;
             var entries_end: usize = 0;
             //TODO: P5 maybe move syscall for generate time_label to high level
@@ -265,16 +271,19 @@ pub fn MemTablePoolType(
                         table_pool.active_table_ptr += 1;
                         active_table = table_pool.tables[table_pool.active_table_ptr];
                     } else {
-                        //TODO: P1 full-filled_table_ptrs all mem_tables
-                        // Надо придумать механизм работы с перезаполненным пулом
-                        // Возможно реализовать ожидание через IO sleep
-                        // или принудительно скидывать таблицы на диск и освобождать
-                        unreachable;
+                        //Back to start of ring and check table is free
+                        if (! table_pool.free_table_ptrs[0]) {
+                            return entries_end;
+                        }
+
+                        table_pool.active_table_ptr = 0;
                     }
                 }
 
                 entries_start = entries_end;
             }
+
+            return entries_end;
         }
 
         pub fn getOne(
@@ -385,6 +394,15 @@ pub fn MemTablePoolType(
             current_entity_idx += 1;
 
             return current_entity_idx;
+        }
+
+        pub fn flushFilledTables(table_pool: *MemTablePool) void {
+            inline for (table_pool.filled_table_ptrs, 0..) |filled, table_ptr| {
+                if (filled) {
+                    table_pool.free_table_ptrs[table_ptr] = true;
+                }
+                table_pool.filled_table_ptrs[table_ptr] = false;
+            }
         }
 
         //TODO: P5 move to Test scope

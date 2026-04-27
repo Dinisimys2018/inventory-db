@@ -13,16 +13,19 @@ const Entity = @import("entities.zig").OrderItem;
 const ConfigModule = struct {
     module_name: []const u8,
     mem_tables_max_count: mem_tables.MemTablePtr,
-    mem_entities_max_count: mem_tables.MemEntryPtr,
+    mem_table_filled_limit: mem_tables.MemTablePtr,
+    mem_tables_entities_max_count: mem_tables.MemEntryPtr,
     mem_tables_reader_buffer_size: usize,
 };
 
 pub fn ModuleType(comptime config: ConfigModule) type {
+    const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
+
     return struct {
         const Module = @This();
         const MemTablesPool = mem_tables.MemTablePoolType(
             config.mem_tables_max_count,
-            config.mem_entities_max_count,
+            config.mem_tables_entities_max_count,
         );
         const Storage = storage.StorageType(config.module_name, config.mem_tables_reader_buffer_size);
         const ReaderMemTable = reader_mem_tables.ReaderMemTableType(MemTablesPool.TableList);
@@ -56,12 +59,31 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             allocator.destroy(module);
         }
 
+        pub fn insertToMemTables(module: *Module, io: std.Io, entities: []*Entity) !struct {usize, usize} {
+            var total_flushed: usize = 0;
+            var inserted: usize = 0;
+
+            while(inserted < entities.len) {
+                inserted = try module.pool_mem_tables.insert(io, entities[inserted..]);
+                if (inserted >= mem_tables_entites_max_count_per_insert) {
+                    total_flushed += try module.flushAllFilledMemTables(io);
+                }
+            } 
+
+            return .{inserted, total_flushed};
+        }
+
         pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !usize {
             assert(module.pool_mem_tables.active_table_ptr > 0);
 
-            module.reader_mem_tables.start(0, module.pool_mem_tables.active_table_ptr);
+            const filled_tables_count = module.pool_mem_tables.active_table_ptr;
+            module.reader_mem_tables.start(0, filled_tables_count);
 
-            return try module.storage.streamFrom(io, module.reader_mem_tables);
+            const total_streamed  = try module.storage.streamFrom(io, module.reader_mem_tables);
+
+            module.pool_mem_tables.flushFilledTables();
+
+            return total_streamed;
         }
     };
 }
@@ -102,7 +124,8 @@ test "Module: write pool_mem_tables to storage" {
     const config_module: ConfigModule = .{
         .module_name = "order_items",
         .mem_tables_max_count = 5,
-        .mem_entities_max_count = 5,
+        .mem_table_filled_limit = 4,
+        .mem_tables_entities_max_count = 5,
         .mem_tables_reader_buffer_size = 4 * 1024,
     };
 
@@ -113,7 +136,7 @@ test "Module: write pool_mem_tables to storage" {
     );
     defer module.deinit(allocator, io);
     // Preparing input data
-    const entities_total = config_module.mem_entities_max_count * config_module.mem_tables_max_count - 1;
+    const entities_total = config_module.mem_tables_entities_max_count * config_module.mem_tables_max_count - 1;
 
     const input_entities = try testPreparingUniqueEntries(
         allocator,
@@ -129,12 +152,6 @@ test "Module: write pool_mem_tables to storage" {
 
     //==== General test ====
 
-    try module.pool_mem_tables.insert(io, input_entities);
+    _ = try module.insertToMemTables(io, input_entities);
 
-    const total_streamed = try module.flushAllFilledMemTables(io);
-
-    try testing.expectEqual(
-        module.pool_mem_tables.calculateFilledTables() * config_module.mem_entities_max_count,
-        total_streamed,
-    );
 }
