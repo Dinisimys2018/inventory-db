@@ -1,11 +1,11 @@
 //TODO: - change all errors to Error Enum Type
 
 ///
-/// 
+///
 ///  DEPRECATED
-/// 
-/// 
-/// 
+///
+///
+///
 const std = @import("std");
 const ArrayList = std.array_list;
 const assert = std.debug.assert;
@@ -14,8 +14,8 @@ const testing = std.testing;
 const printObj = @import("utils/debug.zig").printObj;
 const stdx_sort = @import("sort.zig");
 
-const TablePtr = @import("order_item_mem_table.zig").MemTablePtr;
-const EntityPtr = @import("order_item_mem_table.zig").MemEntryPtr;
+const TablePtr = @import("mem_table.zig").MemTablePtr;
+const EntityPtr = @import("mem_table.zig").MemEntryPtr;
 const Entity = @import("entities.zig").OrderItem;
 const OrderId = Entity.OrderId;
 const ProductId = Entity.ProductId;
@@ -54,7 +54,7 @@ pub fn MemIndexType() type {
         };
 
         pub const LookupResult = std.ArrayList(BlockLookupValue);
-      
+
         pub fn IndexBlockType(comptime keys_max_count: EntityPtr) type {
             return struct {
                 const IndexBlock = @This();

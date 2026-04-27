@@ -11,7 +11,7 @@ pub const OrderItem = struct {
     order_id: u32,
     product_id: u32,
     quantity: u32 = 0, //100_00 = 100.01
-    status: []const u8 = "",
+    // status: [256]u8 = undefined,
     // price: u32, //100_00 = 100.01
     // total: u32, //100_00 = 100.01
 };

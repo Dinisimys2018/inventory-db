@@ -20,7 +20,7 @@ const EntityType = @import("entities.zig").OrderItem;
 pub const MemTablePtr = u32;
 pub const MemEntryPtr = usize;
 
-const Entities = std.MultiArrayList(EntityType);
+pub const Entities = std.MultiArrayList(EntityType);
 
 const SortCtx = struct {
     entities: *Entities,
@@ -87,7 +87,6 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
             };
 
             mem_table.entities.* = try .initCapacity(allocator, entities_max_count);
-
             return mem_table;
         }
 
@@ -179,7 +178,6 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
         }
         unreachable;
     }
-        
     };
 }
 
@@ -189,8 +187,8 @@ pub fn MemTablePoolType(
 ) type {
     return struct {
         const MemTablePool = @This();
-        const MemTable = MemTableType(entities_max_count);
-        const TableList = []*MemTable;
+        pub const MemTable = MemTableType(entities_max_count);
+        pub const TableList = []*MemTable;
 
         // Struct Fields
         tables: TableList,
@@ -573,7 +571,7 @@ test "MemTablePool: lookupByOrderId" {
     //==== General test ====
 
     try mem_table_pool.insert(io, input_entries);
-
+ 
     for (input_entries) |input_entry| {
         var buffer_lookups: [100]EntityType = undefined;
 
