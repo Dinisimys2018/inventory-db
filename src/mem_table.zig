@@ -174,6 +174,16 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
             return range;
         }
 
+           pub fn clear(mem_table: *MemTable) void {
+            mem_table.max_order_id = 0;
+            mem_table.min_order_id = 0;
+            mem_table.max_product_id = 0;
+            mem_table.min_product_id = 0;
+            mem_table.primary_sorted = false;
+            mem_table.entities.clearRetainingCapacity();
+
+    }
+
         pub fn compareByOrderIdAndProductId(first: EntityType, second: EntityType) std.math.Order {
         if (first.order_id < second.order_id) return .lt;
         if (first.order_id > second.order_id) return .gt;
@@ -184,6 +194,8 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
         }
         unreachable;
     }
+
+ 
     };
 }
 
@@ -198,7 +210,6 @@ pub fn MemTablePoolType(
 
         // Struct Fields
         tables: TableList,
-        free_table_ptrs: [tables_max_count]bool,
         filled_table_ptrs: [tables_max_count]bool,
         active_table_ptr: MemTablePtr = 0,
         lookup_result: *LookupResult,
@@ -207,7 +218,6 @@ pub fn MemTablePoolType(
             var mem_table_pool = try allocator.create(MemTablePool);
             mem_table_pool.* = .{
                 .tables = try allocator.alloc(*MemTable, tables_max_count),
-                .free_table_ptrs = .{true} ** tables_max_count,
                 .filled_table_ptrs = .{false} ** tables_max_count,
                 .active_table_ptr = 0,
                 .lookup_result = try allocator.create(LookupResult),
@@ -242,10 +252,12 @@ pub fn MemTablePoolType(
             var next_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
 
             var active_table = table_pool.tables[table_pool.active_table_ptr];
+            var attempts: usize = 0;
 
             while (entries_end < entities.len) {
-                // Move current active table from free table list
-                table_pool.free_table_ptrs[table_pool.active_table_ptr] = false;
+                //TODO: P5 need to research limit (maybe trigger real error in release mode)
+                attempts += 1;
+                assert(attempts < 50);
 
                 // Получаем количество, которое мы можем вставить в активную таблицу
                 const rest = active_table.entities.capacity - active_table.entities.len;
@@ -255,12 +267,12 @@ pub fn MemTablePoolType(
                     entries_end = entities.len;
                 }
         
-                const toInsert = entities[entries_start..entries_end];
-                next_time_label = active_table.insert(next_time_label, toInsert);
+                const to_insert = entities[entries_start..entries_end];
+                next_time_label = active_table.insert(next_time_label, to_insert);
 
                 // Если мы заполнили все свободное место
                 // значит перемещаем активную таблицу в filled_table_ptrs
-                if (rest == entries_end - entries_start) {
+                if (rest == to_insert.len) {
                     active_table.primarySort();
 
                     table_pool.filled_table_ptrs[table_pool.active_table_ptr] = true;
@@ -271,16 +283,18 @@ pub fn MemTablePoolType(
                         table_pool.active_table_ptr += 1;
                         active_table = table_pool.tables[table_pool.active_table_ptr];
                     } else {
-                        //Back to start of ring and check table is free
-                        if (! table_pool.free_table_ptrs[0]) {
+                        //Back to start of ring and check table is filled
+                        if (table_pool.filled_table_ptrs[0]) {
                             return entries_end;
                         }
 
                         table_pool.active_table_ptr = 0;
+                        active_table = table_pool.tables[table_pool.active_table_ptr];
                     }
                 }
 
                 entries_start = entries_end;
+
             }
 
             return entries_end;
@@ -396,20 +410,20 @@ pub fn MemTablePoolType(
             return current_entity_idx;
         }
 
-        pub fn flushFilledTables(table_pool: *MemTablePool) void {
-            inline for (table_pool.filled_table_ptrs, 0..) |filled, table_ptr| {
-                if (filled) {
-                    table_pool.free_table_ptrs[table_ptr] = true;
+        pub fn clearFilledTables(table_pool: *MemTablePool) void {
+            inline for (table_pool.filled_table_ptrs, 0..) |is_filled, table_ptr| {
+                if (is_filled) {
+                    table_pool.filled_table_ptrs[table_ptr] = false;
+                    table_pool.tables[table_ptr].clear();
                 }
-                table_pool.filled_table_ptrs[table_ptr] = false;
             }
         }
 
         //TODO: P5 move to Test scope
         pub fn calculateFreeTables(table_pool: *MemTablePool) MemTablePtr {
             var count_tables: MemTablePtr = 0;
-            for (table_pool.free_table_ptrs) |is_free| {
-                if (is_free) {
+            for (table_pool.filled_table_ptrs) |is_filled| {
+                if (! is_filled) {
                     count_tables += 1;
                 }
             }

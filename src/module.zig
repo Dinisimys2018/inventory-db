@@ -59,18 +59,30 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             allocator.destroy(module);
         }
 
-        pub fn insertToMemTables(module: *Module, io: std.Io, entities: []*Entity) !struct {usize, usize} {
+        pub fn insertToMemTables(module: *Module, io: std.Io, entities: []*Entity) !struct { usize, usize } {
             var total_flushed: usize = 0;
             var inserted: usize = 0;
+            var end: usize = mem_tables_entites_max_count_per_insert;
+            var attempts: usize = 0;
 
-            while(inserted < entities.len) {
-                inserted = try module.pool_mem_tables.insert(io, entities[inserted..]);
+            while (inserted < entities.len) {
+                attempts += 1;
+                //TODO: P5 need to research limit (maybe trigger real error in release mode)
+                
+                assert(attempts < 50);
+
+                if (inserted + end > entities.len) {
+                    end = entities.len;
+                }
+                inserted += try module.pool_mem_tables.insert(io, entities[inserted..end]);
+                assert(inserted > 0);
+
                 if (inserted >= mem_tables_entites_max_count_per_insert) {
                     total_flushed += try module.flushAllFilledMemTables(io);
                 }
-            } 
+            }
 
-            return .{inserted, total_flushed};
+            return .{ inserted, total_flushed };
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !usize {
@@ -79,9 +91,9 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             const filled_tables_count = module.pool_mem_tables.active_table_ptr;
             module.reader_mem_tables.start(0, filled_tables_count);
 
-            const total_streamed  = try module.storage.streamFrom(io, module.reader_mem_tables);
+            const total_streamed = try module.storage.streamFrom(io, module.reader_mem_tables);
 
-            module.pool_mem_tables.flushFilledTables();
+            module.pool_mem_tables.clearFilledTables();
 
             return total_streamed;
         }
@@ -152,6 +164,14 @@ test "Module: write pool_mem_tables to storage" {
 
     //==== General test ====
 
+    const insert_result_first = try module.insertToMemTables(io, input_entities);
+    const expected_entities_flushed = config_module.mem_table_filled_limit * config_module.mem_tables_entities_max_count;
+
+    try testing.expectEqual(entities_total, insert_result_first[0]);
+    try testing.expectEqual(expected_entities_flushed, insert_result_first[1]);
+
     _ = try module.insertToMemTables(io, input_entities);
 
+    // try testing.expectEqual(entities_total, insert_result_second[0]);
+    // try testing.expectEqual(expected_entities_flushed, insert_result_second[1]);
 }
