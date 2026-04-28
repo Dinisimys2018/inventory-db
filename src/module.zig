@@ -7,6 +7,8 @@ const printObj = @import("utils/debug.zig").printObj;
 
 const mem_tables = @import("mem_table.zig");
 const storage = @import("storage.zig");
+const zones_storage = @import("zone_storage.zig");
+
 const reader_mem_tables = @import("reader_mem_table.zig");
 
 const Entity = @import("entities.zig").OrderItem;
@@ -17,7 +19,6 @@ const ConfigModule = struct {
     mem_table_filled_limit: mem_tables.MemTablePtr,
     mem_tables_entities_max_count: mem_tables.MemEntryPtr,
     mem_tables_reader_buffer_size: usize,
-    table_levels: []const storage.TableLevel,
 };
 
 pub fn ModuleType(comptime config: ConfigModule) type {
@@ -29,26 +30,46 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             config.mem_tables_max_count,
             config.mem_tables_entities_max_count,
         );
-        const Storage = storage.StorageType(config.table_levels, config.module_name, config.mem_tables_reader_buffer_size);
-        const ReaderMemTable = reader_mem_tables.ReaderMemTableType(MemTablesPool.TableList);
+  
+        const MetaReaderMemTable = reader_mem_tables.MetaReaderMemTableType(MemTablesPool.TableList);
+        const DataReaderMemTable = reader_mem_tables.DataReaderMemTableType(MemTablesPool.TableList);
+
+        const GlobalZoneStorage = zones_storage.GlobalZoneType();
+
+        const Storage = storage.StorageType(
+            GlobalZoneStorage,
+            config.module_name,
+            config.mem_tables_reader_buffer_size,
+        );
 
         // FIELDS
         config: ConfigModule = config,
         storage: *Storage,
         pool_mem_tables: *MemTablesPool,
-        reader_mem_tables: *ReaderMemTable,
+        meta_reader_mem_tables: *MetaReaderMemTable,
+        data_reader_mem_tables: *DataReaderMemTable,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
+            var global_zone_storage: *GlobalZoneStorage = try .init(allocator, 0);
+            errdefer global_zone_storage.deinit(allocator);
+
+            try global_zone_storage.initZone(allocator, .meta_tables_level_0, 100);
+            try global_zone_storage.initZone(allocator, .data_tables_level_0, 100);
+
+            const storage_module: *Storage = try .init(
+                allocator,
+                io,
+                storage_base_dir,
+                global_zone_storage,
+            );
+            errdefer storage_module.deinit(allocator, io);
+
             var module = try allocator.create(Module);
 
             module.pool_mem_tables = try .init(allocator);
-            errdefer module.pool_mem_tables.deinit(allocator);
-
-            module.storage = try .init(allocator, io, storage_base_dir);
-            errdefer module.storage.deinit(allocator, io);
-
-            module.reader_mem_tables = try .init(allocator, module.pool_mem_tables.tables);
-            errdefer module.reader_mem_tables.deinit(allocator);
+            module.storage = storage_module;
+            module.meta_reader_mem_tables = try .init(allocator, module.pool_mem_tables.tables);
+            module.data_reader_mem_tables = try .init(allocator, module.pool_mem_tables.tables);
 
             return module;
         }
@@ -56,7 +77,8 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         pub fn deinit(module: *Module, allocator: std.mem.Allocator, io: std.Io) void {
             module.storage.deinit(allocator, io);
             module.pool_mem_tables.deinit(allocator);
-            module.reader_mem_tables.deinit(allocator);
+            module.meta_reader_mem_tables.deinit(allocator);
+            module.data_reader_mem_tables.deinit(allocator);
 
             allocator.destroy(module);
         }
@@ -94,15 +116,15 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             assert(module.pool_mem_tables.active_table_ptr > 0);
 
             const filled_tables_count = module.pool_mem_tables.active_table_ptr;
-            module.reader_mem_tables.start(0, filled_tables_count);
 
-            _ = try module.storage.streamMeta(io, module.reader_mem_tables);
+            module.meta_reader_mem_tables.start(0, filled_tables_count);
 
-            const total_streamed = try module.storage.streamData(io, module.reader_mem_tables);
+            const meta_total_streamed = try module.storage.streamToZone(io,.meta_tables_level_0, module.meta_reader_mem_tables);
+            const data_total_streamed = try module.storage.streamToZone(io,.data_tables_level_0, module.data_reader_mem_tables);
 
             module.pool_mem_tables.clearFilledTables();
 
-            return total_streamed;
+            return meta_total_streamed + data_total_streamed;
         }
     };
 }
