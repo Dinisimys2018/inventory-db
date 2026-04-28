@@ -6,8 +6,6 @@ const Error = Writer.FileError;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const Entity = @import("entities.zig").OrderItem;
-const Entities = @import("mem_table.zig").Entities;
 const MemTablePtr = @import("mem_table.zig").MemTablePtr;
 const MemEntryPtr = @import("mem_table.zig").MemEntryPtr;
 
@@ -41,7 +39,18 @@ pub fn ReaderMemTableType(comptime TableList: type) type {
             allocator.destroy(reader);
         }
 
-        pub fn stream(reader: *Reader, writer: *Writer) Error!usize {
+        pub fn streamMeta(reader: *Reader, writer: *Writer) Error!usize {
+            var meta_table_ptr = reader.table_ptr;
+         
+            while (meta_table_ptr <= reader.end_ptr): (meta_table_ptr += 1) {
+                // TODO: P5 research any write methods
+                try writer.writeAll(std.mem.asBytes(&reader.mem_tables[meta_table_ptr].getMeta()));
+            }
+
+            return Error.EndOfStream;
+        }
+
+        pub fn streamData(reader: *Reader, writer: *Writer) Error!usize {
             if (reader.table_ptr > reader.end_ptr) {
                 reader.table_ptr = undefined;
                 reader.end_ptr = undefined;
@@ -54,6 +63,7 @@ pub fn ReaderMemTableType(comptime TableList: type) type {
 
             while (enitity_ptr < slice.len) : (enitity_ptr += 1) {
                 const entity = slice.get(enitity_ptr);
+                // TODO: P5 research any write methods
                 try writer.writeAll(std.mem.asBytes(&entity));
             }
 

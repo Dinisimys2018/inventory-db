@@ -8,6 +8,7 @@ const printObj = @import("utils/debug.zig").printObj;
 const mem_tables = @import("mem_table.zig");
 const storage = @import("storage.zig");
 const reader_mem_tables = @import("reader_mem_table.zig");
+
 const Entity = @import("entities.zig").OrderItem;
 
 const ConfigModule = struct {
@@ -16,6 +17,7 @@ const ConfigModule = struct {
     mem_table_filled_limit: mem_tables.MemTablePtr,
     mem_tables_entities_max_count: mem_tables.MemEntryPtr,
     mem_tables_reader_buffer_size: usize,
+    table_levels: []const storage.TableLevel,
 };
 
 pub fn ModuleType(comptime config: ConfigModule) type {
@@ -27,7 +29,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             config.mem_tables_max_count,
             config.mem_tables_entities_max_count,
         );
-        const Storage = storage.StorageType(config.module_name, config.mem_tables_reader_buffer_size);
+        const Storage = storage.StorageType(config.table_levels, config.module_name, config.mem_tables_reader_buffer_size);
         const ReaderMemTable = reader_mem_tables.ReaderMemTableType(MemTablesPool.TableList);
 
         // FIELDS
@@ -68,7 +70,6 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             while (inserted < entities.len) {
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
-                
                 assert(attempts < 50);
 
                 if (inserted + end > entities.len) {
@@ -76,7 +77,11 @@ pub fn ModuleType(comptime config: ConfigModule) type {
                 }
                 inserted += try module.pool_mem_tables.insert(io, entities[inserted..end]);
                 assert(inserted > 0);
-
+                //TODO: P3 Flush tables on storage - VERY SLOW operation
+                // So, we need to reseach how can return response on client request
+                // without awating for flushing.
+                // For example: we can calculate total rest of entities for tables pool and insert only
+                // slice via info about rest
                 if (inserted >= mem_tables_entites_max_count_per_insert) {
                     total_flushed += try module.flushAllFilledMemTables(io);
                 }
@@ -91,7 +96,9 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             const filled_tables_count = module.pool_mem_tables.active_table_ptr;
             module.reader_mem_tables.start(0, filled_tables_count);
 
-            const total_streamed = try module.storage.streamFrom(io, module.reader_mem_tables);
+            _ = try module.storage.streamMeta(io, module.reader_mem_tables);
+
+            const total_streamed = try module.storage.streamData(io, module.reader_mem_tables);
 
             module.pool_mem_tables.clearFilledTables();
 
@@ -128,7 +135,7 @@ fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize
     return input_entries;
 }
 
-test "Module: write pool_mem_tables to storage" {
+test "Module:pool_mem_tables: nothing to flush on storage" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     const tmp_dir = testing.tmpDir(.{});
@@ -139,6 +146,10 @@ test "Module: write pool_mem_tables to storage" {
         .mem_table_filled_limit = 4,
         .mem_tables_entities_max_count = 5,
         .mem_tables_reader_buffer_size = 4 * 1024,
+        .table_levels = &[_]storage.TableLevel{.{
+            .data_zone_maz_size = 1,
+            .meta_zone_max_size = 2,
+        }},
     };
 
     var module: *ModuleType(config_module) = try .init(
@@ -148,7 +159,7 @@ test "Module: write pool_mem_tables to storage" {
     );
     defer module.deinit(allocator, io);
     // Preparing input data
-    const entities_total = config_module.mem_tables_entities_max_count * config_module.mem_tables_max_count - 1;
+    const entities_total = config_module.mem_tables_entities_max_count - 1;
 
     const input_entities = try testPreparingUniqueEntries(
         allocator,
@@ -164,14 +175,95 @@ test "Module: write pool_mem_tables to storage" {
 
     //==== General test ====
 
-    const insert_result_first = try module.insertToMemTables(io, input_entities);
-    const expected_entities_flushed = config_module.mem_table_filled_limit * config_module.mem_tables_entities_max_count;
+    const insert_result = try module.insertToMemTables(io, input_entities);
+    const expected_entities_flushed = 0;
 
-    try testing.expectEqual(entities_total, insert_result_first[0]);
-    try testing.expectEqual(expected_entities_flushed, insert_result_first[1]);
+    try testing.expectEqual(entities_total, insert_result[0]);
+    try testing.expectEqual(expected_entities_flushed, insert_result[1]);
+}
 
-    _ = try module.insertToMemTables(io, input_entities);
+test "Module:pool_mem_tables: limited filled tables to flush on storage" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const tmp_dir = testing.tmpDir(.{});
 
-    // try testing.expectEqual(entities_total, insert_result_second[0]);
-    // try testing.expectEqual(expected_entities_flushed, insert_result_second[1]);
+    const config_module: ConfigModule = .{
+        .module_name = "order_items",
+        .mem_tables_max_count = 5,
+        .mem_table_filled_limit = 2,
+        .mem_tables_entities_max_count = 5,
+        .mem_tables_reader_buffer_size = 4 * 1024,
+    };
+
+    var module: *ModuleType(config_module) = try .init(
+        allocator,
+        io,
+        tmp_dir.dir,
+    );
+    defer module.deinit(allocator, io);
+    // Preparing input data
+    const entities_total = config_module.mem_table_filled_limit * config_module.mem_tables_entities_max_count;
+
+    const input_entities = try testPreparingUniqueEntries(
+        allocator,
+        entities_total,
+    );
+
+    defer {
+        for (input_entities) |entry| allocator.destroy(entry);
+        allocator.free(input_entities);
+    }
+
+    // -------------------
+
+    //==== General test ====
+
+    const insert_result = try module.insertToMemTables(io, input_entities);
+    const expected_entities_flushed = entities_total;
+
+    try testing.expectEqual(entities_total, insert_result[0]);
+    try testing.expectEqual(expected_entities_flushed, insert_result[1]);
+}
+
+test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const tmp_dir = testing.tmpDir(.{});
+
+    const config_module: ConfigModule = .{
+        .module_name = "order_items",
+        .mem_tables_max_count = 5,
+        .mem_table_filled_limit = 2,
+        .mem_tables_entities_max_count = 5,
+        .mem_tables_reader_buffer_size = 4 * 1024,
+    };
+
+    var module: *ModuleType(config_module) = try .init(
+        allocator,
+        io,
+        tmp_dir.dir,
+    );
+    defer module.deinit(allocator, io);
+    // Preparing input data
+    const entities_total = config_module.mem_tables_max_count * config_module.mem_tables_entities_max_count;
+
+    const input_entities = try testPreparingUniqueEntries(
+        allocator,
+        entities_total,
+    );
+
+    defer {
+        for (input_entities) |entry| allocator.destroy(entry);
+        allocator.free(input_entities);
+    }
+
+    // -------------------
+
+    //==== General test ====
+
+    const insert_result = try module.insertToMemTables(io, input_entities);
+    const expected_entities_flushed = entities_total;
+
+    try testing.expectEqual(entities_total, insert_result[0]);
+    try testing.expectEqual(expected_entities_flushed, insert_result[1]);
 }

@@ -12,9 +12,6 @@ const testing = std.testing;
 const printObj = @import("utils/debug.zig").printObj;
 const stdx_sort = @import("sort.zig");
 
-//TODO use reflection from entity struct instead of u32
-const Index = @import("non_unique_mem_index.zig").MemIndexType();
-
 const EntityType = @import("entities.zig").OrderItem;
 
 pub const MemTablePtr = u32;
@@ -66,6 +63,13 @@ pub const InsertState = enum {
     Overflow,
 };
 
+const Meta = struct {
+    min_order_id: EntityType.OrderId,
+    max_order_id: EntityType.OrderId,
+    min_product_id: EntityType.ProductId,
+    max_product_id: EntityType.ProductId,
+};
+
 pub fn MemTableType(entities_max_count: MemEntryPtr) type {
     return struct {
         const MemTable = @This();
@@ -75,20 +79,19 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
 
         entities: *Entities,
         primary_sorted: bool,
-        min_order_id: EntityType.OrderId,
-        max_order_id: EntityType.OrderId,
-        min_product_id: EntityType.ProductId,
-        max_product_id: EntityType.ProductId,
+        meta: Meta,
 
         pub fn init(allocator: std.mem.Allocator) !*MemTable {
             const mem_table = try allocator.create(MemTable);
 
             mem_table.* = .{
                 .primary_sorted = false,
-                .max_order_id = 0,
-                .min_order_id = 0,
-                .min_product_id = 0,
-                .max_product_id = 0,
+                .meta = .{
+                    .max_order_id = 0,
+                    .min_order_id = 0,
+                    .min_product_id = 0,
+                    .max_product_id = 0,
+                },
                 .entities = try allocator.create(Entities),
             };
 
@@ -108,24 +111,24 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
             mem_table.primary_sorted = false;
 
             if (mem_table.entities.len == 0) {
-                mem_table.min_order_id = entities[0].order_id;
-                mem_table.max_order_id = entities[0].order_id;
-                mem_table.min_product_id = entities[0].product_id;
-                mem_table.max_product_id = entities[0].product_id;
+                mem_table.meta.min_order_id = entities[0].order_id;
+                mem_table.meta.max_order_id = entities[0].order_id;
+                mem_table.meta.min_product_id = entities[0].product_id;
+                mem_table.meta.max_product_id = entities[0].product_id;
             }
 
             var time_label = init_time_label;
             for (entities) |entity| {
-                if (entity.order_id < mem_table.min_order_id) {
-                    mem_table.min_order_id = entity.order_id;
-                } else if (entity.order_id > mem_table.max_order_id) {
-                    mem_table.max_order_id = entity.order_id;
+                if (entity.order_id < mem_table.meta.min_order_id) {
+                    mem_table.meta.min_order_id = entity.order_id;
+                } else if (entity.order_id > mem_table.meta.max_order_id) {
+                    mem_table.meta.max_order_id = entity.order_id;
                 }
 
-                if (entity.product_id < mem_table.min_product_id) {
-                    mem_table.min_product_id = entity.product_id;
-                } else if (entity.product_id > mem_table.max_product_id) {
-                    mem_table.max_product_id = entity.product_id;
+                if (entity.product_id < mem_table.meta.min_product_id) {
+                    mem_table.meta.min_product_id = entity.product_id;
+                } else if (entity.product_id > mem_table.meta.max_product_id) {
+                    mem_table.meta.max_product_id = entity.product_id;
                 }
                 entity.time_label = time_label;
                 mem_table.entities.appendAssumeCapacity(entity.*);
@@ -175,16 +178,21 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
         }
 
            pub fn clear(mem_table: *MemTable) void {
-            mem_table.max_order_id = 0;
-            mem_table.min_order_id = 0;
-            mem_table.max_product_id = 0;
-            mem_table.min_product_id = 0;
+            mem_table.meta.max_order_id = 0;
+            mem_table.meta.min_order_id = 0;
+            mem_table.meta.max_product_id = 0;
+            mem_table.meta.min_product_id = 0;
             mem_table.primary_sorted = false;
             mem_table.entities.clearRetainingCapacity();
 
     }
 
-        pub fn compareByOrderIdAndProductId(first: EntityType, second: EntityType) std.math.Order {
+    pub fn getMeta(mem_table: *MemTable) Meta {
+        return mem_table.meta;
+    }
+
+    
+    pub fn compareByOrderIdAndProductId(first: EntityType, second: EntityType) std.math.Order {
         if (first.order_id < second.order_id) return .lt;
         if (first.order_id > second.order_id) return .gt;
         if (first.order_id == second.order_id) {
