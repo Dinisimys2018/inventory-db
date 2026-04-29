@@ -63,7 +63,7 @@ pub const InsertState = enum {
     Overflow,
 };
 
-const Meta = struct {
+pub const MetaMemTable = struct {
     min_order_id: EntityType.OrderId,
     max_order_id: EntityType.OrderId,
     min_product_id: EntityType.ProductId,
@@ -79,7 +79,7 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
 
         entities: *Entities,
         primary_sorted: bool,
-        meta: Meta,
+        meta: MetaMemTable,
 
         pub fn init(allocator: std.mem.Allocator) !*MemTable {
             const mem_table = try allocator.create(MemTable);
@@ -187,7 +187,7 @@ pub fn MemTableType(entities_max_count: MemEntryPtr) type {
 
     }
 
-    pub fn getMeta(mem_table: *MemTable) Meta {
+    pub fn getMeta(mem_table: *MemTable) MetaMemTable {
         return mem_table.meta;
     }
 
@@ -418,7 +418,7 @@ pub fn MemTablePoolType(
             return current_entity_idx;
         }
 
-        pub fn clearFilledTables(table_pool: *MemTablePool) void {
+        pub fn freeFilledTables(table_pool: *MemTablePool) void {
             inline for (table_pool.filled_table_ptrs, 0..) |is_filled, table_ptr| {
                 if (is_filled) {
                     table_pool.filled_table_ptrs[table_ptr] = false;

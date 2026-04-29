@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 
 pub const Zone = struct {
     offset: usize,
@@ -22,6 +23,7 @@ pub const Zone = struct {
 };
 
 pub const ZoneKey = enum {
+    headers,
     meta_tables_level_0,
     data_tables_level_0,
 };

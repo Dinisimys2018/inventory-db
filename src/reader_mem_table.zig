@@ -9,100 +9,97 @@ const printObj = @import("utils/debug.zig").printObj;
 const MemTablePtr = @import("mem_table.zig").MemTablePtr;
 const MemEntryPtr = @import("mem_table.zig").MemEntryPtr;
 
-pub fn MetaReaderMemTableType(comptime TableList: type) type {
+pub fn MetaReaderMemTableType(comptime PoolMemTables: type) type {
     return struct {
         const Reader = @This();
 
         // FIELDS
-        mem_tables: TableList,
         table_ptr: MemTablePtr,
-        end_ptr: MemTablePtr,
+        pool_mem_tables: *PoolMemTables,
 
-        pub fn init(allocator: std.mem.Allocator, mem_tables: TableList) !*Reader {
+        pub fn init(allocator: std.mem.Allocator, pool_mem_tables: *PoolMemTables) !*Reader {
             var reader = try allocator.create(Reader);
-            reader.mem_tables = mem_tables;
+            reader.pool_mem_tables = pool_mem_tables;
 
             return reader;
-        }
-
-        pub fn start(reader: *Reader, start_ptr: MemTablePtr, limit: MemTablePtr) void {
-            assert(limit > 0);
-
-            reader.table_ptr = start_ptr;
-            reader.end_ptr = start_ptr + limit - 1;
-
-            assert(reader.end_ptr < reader.mem_tables.len);
-            assert(reader.table_ptr <= reader.end_ptr);
         }
 
         pub fn deinit(reader: *Reader, allocator: std.mem.Allocator) void {
             allocator.destroy(reader);
         }
 
+        pub fn start(reader: *Reader) void {
+            reader.table_ptr = 0;
+        }
+
         pub fn stream(reader: *Reader, writer: *Writer) Error!usize {
-            var table_ptr = reader.table_ptr;
-         
-            while (table_ptr <= reader.end_ptr): (table_ptr += 1) {
-                // TODO: P5 research any write methods
-                try writer.writeAll(std.mem.asBytes(&reader.mem_tables[table_ptr].getMeta()));
+            if (reader.table_ptr == reader.pool_mem_tables.filled_table_ptrs.len) {
+                reader.table_ptr = undefined;
+                return Error.EndOfStream;
+            }
+            var total_streamed_bytes: usize = 0;
+            while (reader.table_ptr < reader.pool_mem_tables.filled_table_ptrs.len) : (reader.table_ptr += 1) {
+                if (reader.pool_mem_tables.filled_table_ptrs[reader.table_ptr]) {
+                    const bytes = std.mem.asBytes(&reader.pool_mem_tables.tables[reader.table_ptr].meta);
+                    try writer.writeAll(bytes);
+                    total_streamed_bytes += bytes.len;
+                }
             }
 
-            return Error.EndOfStream;
+            return total_streamed_bytes;
         }
     };
 }
 
-
-pub fn DataReaderMemTableType(comptime TableList: type) type {
+pub fn DataReaderMemTableType(comptime PoolMemTables: type) type {
     return struct {
         const Reader = @This();
 
         // FIELDS
-        mem_tables: TableList,
         table_ptr: MemTablePtr,
-        end_ptr: MemTablePtr,
+        pool_mem_tables: *PoolMemTables,
 
-        pub fn init(allocator: std.mem.Allocator, mem_tables: TableList) !*Reader {
+        pub fn init(allocator: std.mem.Allocator, pool_mem_tables: *PoolMemTables) !*Reader {
             var reader = try allocator.create(Reader);
-            reader.mem_tables = mem_tables;
+            reader.pool_mem_tables = pool_mem_tables;
 
             return reader;
-        }
-
-        pub fn start(reader: *Reader, start_ptr: MemTablePtr, limit: MemTablePtr) void {
-            assert(limit > 0);
-
-            reader.table_ptr = start_ptr;
-            reader.end_ptr = start_ptr + limit - 1;
-
-            assert(reader.end_ptr < reader.mem_tables.len);
-            assert(reader.table_ptr <= reader.end_ptr);
         }
 
         pub fn deinit(reader: *Reader, allocator: std.mem.Allocator) void {
             allocator.destroy(reader);
         }
 
+        pub fn start(reader: *Reader) void {
+            reader.table_ptr = 0;
+        }
+
         pub fn stream(reader: *Reader, writer: *Writer) Error!usize {
-            if (reader.table_ptr > reader.end_ptr) {
+            if (reader.table_ptr == reader.pool_mem_tables.filled_table_ptrs.len) {
                 reader.table_ptr = undefined;
-                reader.end_ptr = undefined;
 
                 return Error.EndOfStream;
             }
 
-            var enitity_ptr: MemEntryPtr = 0;
-            const slice = reader.mem_tables[reader.table_ptr].entities.slice();
+            if (!reader.pool_mem_tables.filled_table_ptrs[reader.table_ptr]) {
+                reader.table_ptr += 1;
+                return 0;
+            }
 
+            var enitity_ptr: MemEntryPtr = 0;
+            const slice = reader.pool_mem_tables.tables[reader.table_ptr].entities.slice();
+
+            var total_streamed_bytes: usize = 0;
             while (enitity_ptr < slice.len) : (enitity_ptr += 1) {
                 const entity = slice.get(enitity_ptr);
-                // TODO: P5 research any write methods
-                try writer.writeAll(std.mem.asBytes(&entity));
+                const bytes = std.mem.asBytes(&entity);
+                try writer.writeAll(bytes);
+                total_streamed_bytes += bytes.len;
             }
 
             reader.table_ptr += 1;
 
-            return slice.len;
+            return total_streamed_bytes;
         }
     };
 }

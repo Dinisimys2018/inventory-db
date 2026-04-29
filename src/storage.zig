@@ -59,20 +59,22 @@ pub fn StorageType(
         pub fn streamToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, reader: anytype) !usize {
             var zone: *zone_storage.Zone = storage.global_zone.getZone(zone_key);
 
-            var file_writer = try storage.file.writerStreaming(io, storage.buffer, zone.offset);
+            var file_writer = storage.file.writerStreaming(io, storage.buffer);
 
-            var total_streamed: usize = 0;
+            try file_writer.seekTo(zone.offset + zone.position);
+
+            var total_streamed_bytes: usize = 0;
             while (true) {
                 const n = reader.stream(&file_writer.interface) catch |err| switch (err) {
                     error.EndOfStream => break,
                     else => return 0,
                 };
-                total_streamed += n;
+                total_streamed_bytes += n;
             }
 
-            zone.position += total_streamed;
+            zone.position += total_streamed_bytes;
 
-            return total_streamed;
+            return total_streamed_bytes;
         }
     };
 }
