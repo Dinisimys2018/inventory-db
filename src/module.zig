@@ -6,12 +6,12 @@ const Io = std.Io;
 const printObj = @import("utils/debug.zig").printObj;
 
 const mem_tables = @import("mem_table.zig");
+const index_table = @import("index_table.zig");
 const storage = @import("storage.zig");
 const zones_storage = @import("zone_storage.zig");
-
 const reader_mem_tables = @import("reader_mem_table.zig");
 
-const Entity = @import("entities.zig").OrderItem;
+const Entity = @import("order_item_entity.zig").OrderItem;
 
 const ConfigModule = struct {
     module_name: []const u8,
@@ -23,22 +23,30 @@ const ConfigModule = struct {
 };
 
 pub fn ModuleType(comptime config: ConfigModule) type {
-    const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
-
-    const entity_size = @sizeOf(Entity);
-    const meta_mem_table_size = @sizeOf(mem_tables.MetaMemTable);
-
-    const meta_tables_level_0_size: usize = meta_mem_table_size * config.level_0_tables_count;
-    const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
-
     return struct {
+        const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
+
+        const IndexTable = index_table.IndexTableWithTwoKeysType(
+            Entity,
+            Entity.OrderId,
+            Entity.ProductId,
+            "order_id",
+            "product_id",
+        );
+
+        const entity_size = @sizeOf(Entity);
+        const index_table_size = @sizeOf(IndexTable);
+
+        const index_tables_level_0_size: usize = index_table_size * config.level_0_tables_count;
+        const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
+
         const Module = @This();
         const MemTablesPool = mem_tables.MemTablePoolType(
             config.mem_tables_max_count,
             config.mem_tables_entities_max_count,
         );
 
-        const MetaReaderMemTable = reader_mem_tables.MetaReaderMemTableType(MemTablesPool);
+        const IndexReaderMemTable = reader_mem_tables.IndexReaderMemTableType(MemTablesPool);
         const DataReaderMemTable = reader_mem_tables.DataReaderMemTableType(MemTablesPool);
 
         const GlobalZoneStorage = zones_storage.GlobalZoneType();
@@ -53,14 +61,14 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         config: ConfigModule = config,
         storage: *Storage,
         pool_mem_tables: *MemTablesPool,
-        meta_reader_mem_tables: *MetaReaderMemTable,
+        index_reader_mem_tables: *IndexReaderMemTable,
         data_reader_mem_tables: *DataReaderMemTable,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *GlobalZoneStorage = try .init(allocator, 0);
             errdefer global_zone_storage.deinit(allocator);
 
-            try global_zone_storage.initZone(allocator, .meta_tables_level_0, meta_tables_level_0_size);
+            try global_zone_storage.initZone(allocator, .index_tables_level_0, index_tables_level_0_size);
             try global_zone_storage.initZone(allocator, .data_tables_level_0, data_tables_level_0_size);
 
             const storage_module: *Storage = try .init(
@@ -75,7 +83,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
 
             module.pool_mem_tables = try .init(allocator);
             module.storage = storage_module;
-            module.meta_reader_mem_tables = try .init(allocator, module.pool_mem_tables);
+            module.index_reader_mem_tables = try .init(allocator, module.pool_mem_tables);
             module.data_reader_mem_tables = try .init(allocator, module.pool_mem_tables);
 
             return module;
@@ -84,7 +92,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         pub fn deinit(module: *Module, allocator: std.mem.Allocator, io: std.Io) void {
             module.storage.deinit(allocator, io);
             module.pool_mem_tables.deinit(allocator);
-            module.meta_reader_mem_tables.deinit(allocator);
+            module.index_reader_mem_tables.deinit(allocator);
             module.data_reader_mem_tables.deinit(allocator);
 
             allocator.destroy(module);
@@ -122,19 +130,26 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
-            module.meta_reader_mem_tables.start();
-            _ = try module.storage.streamToZone(io, .meta_tables_level_0, module.meta_reader_mem_tables);
+            module.index_reader_mem_tables.start();
+            _ = try module.storage.streamToZone(io, .index_tables_level_0, module.index_reader_mem_tables);
+
             module.data_reader_mem_tables.start();
             _ = try module.storage.streamToZone(io, .data_tables_level_0, module.data_reader_mem_tables);
 
             module.pool_mem_tables.freeFilledTables();
+        }
+
+        pub fn lookupByOrderId(module: *Module, value: Entity.OrderId) !*const mem_tables.LookupResult {
+            const mem_lookup_result = module.pool_mem_tables.lookupByOrderId(value);
+
+            return mem_lookup_result;
         }
     };
 }
 
 // TESTING
 
-const TestEntity = @import("entities.zig").OrderItem;
+const TestEntity = @import("order_item_entity.zig").OrderItem;
 
 fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
     var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
@@ -171,6 +186,7 @@ test "Module:pool_mem_tables: nothing to flush on storage" {
         .mem_table_filled_limit = 4,
         .mem_tables_entities_max_count = 5,
         .mem_tables_reader_buffer_size = 4 * 1024,
+        .level_0_tables_count = 5 * 2,
     };
 
     var module: *ModuleType(config_module) = try .init(
@@ -246,7 +262,7 @@ test "Module:pool_mem_tables: limited filled tables to flush on storage" {
     try testing.expectEqual(expected_entities_flushed, insert_result[1]);
 }
 
-test "3Module:pool_mem_tables: full-filled tables pool and all flush on storage" {
+test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     const tmp_dir = testing.tmpDir(.{});

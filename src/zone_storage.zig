@@ -24,7 +24,7 @@ pub const Zone = struct {
 
 pub const ZoneKey = enum {
     headers,
-    meta_tables_level_0,
+    index_tables_level_0,
     data_tables_level_0,
 };
 

@@ -9,7 +9,7 @@ const printObj = @import("utils/debug.zig").printObj;
 const MemTablePtr = @import("mem_table.zig").MemTablePtr;
 const MemEntryPtr = @import("mem_table.zig").MemEntryPtr;
 
-pub fn MetaReaderMemTableType(comptime PoolMemTables: type) type {
+pub fn IndexReaderMemTableType(comptime PoolMemTables: type) type {
     return struct {
         const Reader = @This();
 
@@ -40,7 +40,7 @@ pub fn MetaReaderMemTableType(comptime PoolMemTables: type) type {
             var total_streamed_bytes: usize = 0;
             while (reader.table_ptr < reader.pool_mem_tables.filled_table_ptrs.len) : (reader.table_ptr += 1) {
                 if (reader.pool_mem_tables.filled_table_ptrs[reader.table_ptr]) {
-                    const bytes = std.mem.asBytes(&reader.pool_mem_tables.tables[reader.table_ptr].meta);
+                    const bytes = std.mem.asBytes(&reader.pool_mem_tables.tables[reader.table_ptr].getIndex());
                     try writer.writeAll(bytes);
                     total_streamed_bytes += bytes.len;
                 }
