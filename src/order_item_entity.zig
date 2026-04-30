@@ -44,10 +44,6 @@ pub const OrderItem = struct {
     };
 };
 
-comptime {
-    // assert(@sizeOf(OrderItemRow) == 21);
-}
-
 test "OrderItemRow" {
     printObj("sizeOf OrderItem (bytes)", @sizeOf(OrderItem));
 }

@@ -10,6 +10,7 @@ const index_table = @import("index_table.zig");
 const storage = @import("storage.zig");
 const zones_storage = @import("zone_storage.zig");
 const reader_mem_tables = @import("reader_mem_table.zig");
+const storage_table = @import("storage_table.zig");
 
 const Entity = @import("order_item_entity.zig").OrderItem;
 
@@ -46,6 +47,10 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             config.mem_tables_entities_max_count,
         );
 
+         const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(
+            config.level_0_tables_count,
+        );
+
         const IndexReaderMemTable = reader_mem_tables.IndexReaderMemTableType(MemTablesPool);
         const DataReaderMemTable = reader_mem_tables.DataReaderMemTableType(MemTablesPool);
 
@@ -63,6 +68,8 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         pool_mem_tables: *MemTablesPool,
         index_reader_mem_tables: *IndexReaderMemTable,
         data_reader_mem_tables: *DataReaderMemTable,
+
+        level_0_pool_storage_tables: *Level_0_PoolStorageTables,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *GlobalZoneStorage = try .init(allocator, 0);
@@ -86,6 +93,8 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             module.index_reader_mem_tables = try .init(allocator, module.pool_mem_tables);
             module.data_reader_mem_tables = try .init(allocator, module.pool_mem_tables);
 
+            module.level_0_pool_storage_tables = try .init(allocator);
+
             return module;
         }
 
@@ -94,6 +103,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             module.pool_mem_tables.deinit(allocator);
             module.index_reader_mem_tables.deinit(allocator);
             module.data_reader_mem_tables.deinit(allocator);
+            module.level_0_pool_storage_tables.deinit(allocator);
 
             allocator.destroy(module);
         }
@@ -121,7 +131,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
                 // For example: we can calculate total rest of entities for tables pool and insert only
                 // slice via info about rest
                 if (inserted >= mem_tables_entites_max_count_per_insert) {
-                    try module.flushAllFilledMemTables(io);
+                    // try module.flushAllFilledMemTables(io);
                     end += inserted;
                 }
             }
@@ -129,15 +139,16 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             return inserted;
         }
 
-        pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
-            module.index_reader_mem_tables.start();
-            _ = try module.storage.streamToZone(io, .index_tables_level_0, module.index_reader_mem_tables);
 
-            module.data_reader_mem_tables.start();
-            _ = try module.storage.streamToZone(io, .data_tables_level_0, module.data_reader_mem_tables);
+        // pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
+        //     module.index_reader_mem_tables.start();
+        //     _ = try module.storage.streamToZone(io, .index_tables_level_0, module.index_reader_mem_tables);
 
-            module.pool_mem_tables.freeFilledTables();
-        }
+        //     module.data_reader_mem_tables.start();
+        //     _ = try module.storage.streamToZone(io, .data_tables_level_0, module.data_reader_mem_tables);
+
+        //     module.pool_mem_tables.freeFilledTables();
+        // }
 
         pub fn lookupByOrderId(module: *Module, value: Entity.OrderId) !*const mem_tables.LookupResult {
             const mem_lookup_result = module.pool_mem_tables.lookupByOrderId(value);
