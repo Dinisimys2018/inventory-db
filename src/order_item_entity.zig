@@ -45,6 +45,7 @@ pub const OrderItem = struct {
         .time_label = std.meta.stringToEnum(FieldEntry, "time_label") orelse unreachable,
         .quantity = std.meta.stringToEnum(FieldEntry, "quantity") orelse unreachable,
     });
+    
 };
 
 test "OrderItemRow" {

@@ -7,22 +7,20 @@ const Error = Writer.FileError;
 
 const printObj = @import("utils/debug.zig").printObj;
 pub const zone_storage = @import("zone_storage.zig");
+pub const module = @import("module.zig");
 
-pub fn StorageType(
-    comptime GlobalZone: type,
-    comptime module_name: []const u8,
-    comptime buffer_size: usize,
-) type {
+pub fn StorageType(comptime config: *const module.ConfigModule) type {
+    const Components = config.Components();
+
     return struct {
         const Storage = @This();
 
         // FIELDS
         file: Io.File,
-        buffer: []u8,
-        global_zone: *GlobalZone,
+        global_zone: *Components.GlobalZoneStorage,
 
-        pub fn init(allocator: std.mem.Allocator, io: Io, base_dir: Io.Dir, global_zone: *GlobalZone) !*Storage {
-            const file_open = base_dir.openFile(io, module_name, .{});
+        pub fn init(allocator: std.mem.Allocator, io: Io, base_dir: Io.Dir, global_zone: *Components.GlobalZoneStorage) !*Storage {
+            const file_open = base_dir.openFile(io, config.module_name, .{});
 
             // !!! Data file can't be rewrited
             if (file_open) |existing| {
@@ -34,14 +32,13 @@ pub fn StorageType(
                 }
             }
 
-            const file = try base_dir.createFile(io, module_name, .{});
+            const file = try base_dir.createFile(io, config.module_name, .{});
             errdefer file.close(io);
 
             const storage = try allocator.create(Storage);
             storage.file = file;
             storage.global_zone = global_zone;
 
-            storage.buffer = try allocator.alloc(u8, buffer_size);
             return storage;
         }
 
@@ -51,15 +48,14 @@ pub fn StorageType(
             io: Io,
         ) void {
             storage.global_zone.deinit(allocator);
-            allocator.free(storage.buffer);
             storage.file.close(io);
             allocator.destroy(storage);
         }
 
-        pub fn streamToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, reader: anytype) !usize {
+        pub fn streamToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, buffer: []u8, reader: anytype) !usize {
             var zone: *zone_storage.Zone = storage.global_zone.getZone(zone_key);
 
-            var file_writer = storage.file.writerStreaming(io, storage.buffer);
+            var file_writer = storage.file.writerStreaming(io, buffer);
 
             try file_writer.seekTo(zone.offset + zone.position);
 

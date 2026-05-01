@@ -4,6 +4,8 @@ const assert = std.debug.assert;
 const Allocator = std.mem.Allocator;
 const Io = std.Io;
 
+const module = @import("module.zig");
+
 pub const Zone = struct {
     offset: usize,
     position: usize,
@@ -28,7 +30,9 @@ pub const ZoneKey = enum {
     data_tables_level_0,
 };
 
-pub fn GlobalZoneType() type {
+pub fn GlobalZoneType(comptime config: *const module.ConfigModule) type {
+    _ = config;
+
     return struct {
         const GlobalZone = @This();
 
