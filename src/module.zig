@@ -18,33 +18,19 @@ pub const EntityEnum = enum {
     order_item,
 };
 
-
 pub const ConfigModule = struct {
     entity: EntityEnum,
-    module_name: []const u8,
     mem_tables_max_count: mem_tables.MemTablePtr,
     mem_table_filled_limit: mem_tables.MemTablePtr,
     mem_tables_entities_max_count: mem_tables.MemEntryPtr,
     level_0_tables_count: u32,
 
     pub fn Components(config: *const ConfigModule) type {
-           const _Entity = switch (config.entity) {
-            .order_item => OrderItem,
-        };
-
-        const _IndexTable = switch (config.entity) {
-            .order_item => index_table.IndexTableWithTwoKeysType(
-                OrderItem,
-                OrderItem.OrderId,
-                OrderItem.ProductId,
-                "order_id",
-                "product_id",
-            ),
-        };
-
         return struct {
-            pub const Entity = _Entity;
-            pub const IndexTable = _IndexTable;
+            pub const Entity = switch (config.entity) {
+                .order_item => OrderItem,
+            };
+            pub const IndexTable = Entity.IndexTable;
             pub const MemTable = mem_tables.MemTableType(config);
             pub const MemTablesPool = mem_tables.MemTablePoolType(config);
             pub const GlobalZoneStorage = zones_storage.GlobalZoneType(config);
@@ -54,17 +40,6 @@ pub const ConfigModule = struct {
         };
     }
 };
-
-
-// pub const Entity = OrderItem;
-
-// pub const IndexTable = index_table.IndexTableWithTwoKeysType(
-//     OrderItem,
-//     OrderItem.OrderId,
-//     OrderItem.ProductId,
-//     "order_id",
-//     "product_id",
-// );
 
 pub fn ModuleType(comptime config: ConfigModule) type {
     const Components = config.Components();
@@ -217,7 +192,7 @@ test "Module:pool_mem_tables: nothing to flush on storage" {
     const tmp_dir = testing.tmpDir(.{});
 
     const config_module: ConfigModule = .{
-        .entity = .OrderItem,
+        .entity = .order_item,
         .module_name = "order_items",
         .mem_tables_max_count = 5,
         .mem_table_filled_limit = 4,
@@ -298,7 +273,6 @@ test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" 
 
     const config_module: ConfigModule = .{
         .entity = .order_item,
-        .module_name = "order_items",
         .mem_tables_max_count = 5,
         .mem_table_filled_limit = 2,
         .mem_tables_entities_max_count = 5,

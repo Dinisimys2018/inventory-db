@@ -3,7 +3,11 @@ const assert = std.debug.assert;
 
 const printObj = @import("utils/debug.zig").printObj;
 
+const index_table = @import("index_table.zig");
+
 pub const OrderItem = struct {
+    pub const module_name = "order_items";
+    
     pub const OrderId = u32;
     pub const ProductId = u32;
 
@@ -29,7 +33,6 @@ pub const OrderItem = struct {
         }
     };
 
-
     pub const Field = enum {
         order_id,
         product_id,
@@ -39,13 +42,20 @@ pub const OrderItem = struct {
 
     const FieldEntry = Entities.Field;
 
-    pub const map_field_tags: std.EnumMap(Field,  Entities.Field) = .init(.{
+    pub const map_field_tags: std.EnumMap(Field, Entities.Field) = .init(.{
         .order_id = std.meta.stringToEnum(FieldEntry, "order_id") orelse unreachable,
         .product_id = std.meta.stringToEnum(FieldEntry, "product_id") orelse unreachable,
         .time_label = std.meta.stringToEnum(FieldEntry, "time_label") orelse unreachable,
         .quantity = std.meta.stringToEnum(FieldEntry, "quantity") orelse unreachable,
     });
-    
+
+    pub const IndexTable = index_table.IndexTableWithTwoKeysType(
+        OrderItem,
+        OrderItem.OrderId,
+        OrderItem.ProductId,
+        "order_id",
+        "product_id",
+    );
 };
 
 test "OrderItemRow" {

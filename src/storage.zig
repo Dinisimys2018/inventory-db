@@ -20,7 +20,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
         global_zone: *Components.GlobalZoneStorage,
 
         pub fn init(allocator: std.mem.Allocator, io: Io, base_dir: Io.Dir, global_zone: *Components.GlobalZoneStorage) !*Storage {
-            const file_open = base_dir.openFile(io, config.module_name, .{});
+            const file_open = base_dir.openFile(io, Components.Entity.module_name, .{});
 
             // !!! Data file can't be rewrited
             if (file_open) |existing| {
@@ -32,7 +32,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
                 }
             }
 
-            const file = try base_dir.createFile(io, config.module_name, .{});
+            const file = try base_dir.createFile(io, Components.Entity.module_name, .{});
             errdefer file.close(io);
 
             const storage = try allocator.create(Storage);

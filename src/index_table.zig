@@ -1,9 +1,8 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
-
-pub const Union = union(enum) {
-    complex: IndexTableWithTwoKeysType
+pub const IndexTableUnion = union(enum) {
+    complex: IndexTableWithTwoKeysType,
 };
 
 pub fn IndexTableWithTwoKeysType(
