@@ -48,10 +48,12 @@ pub fn PoolStorageTablesType(comptime tables_max_count: usize) type {
 
         // FIELDS
         tables: []*StorageTable,
+        active_table_ptr: usize,
 
         pub fn init(allocator: Allocator) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.tables = try allocator.alloc(*StorageTable, tables_max_count);
+            pool_storage_tables.active_table_ptr = 0;
             for (0..tables_max_count) |table_ptr| {
                 pool_storage_tables.tables[table_ptr] = try .init(allocator);
             }
@@ -64,6 +66,10 @@ pub fn PoolStorageTablesType(comptime tables_max_count: usize) type {
             }
             allocator.free(pool_storage_tables.tables);
             allocator.destroy(pool_storage_tables);
+        }
+
+        pub fn initTable(pool_storage_tables: *PoolStorageTables, index: *IndexTable) void {
+            pool_storage_tables.tables[pool_storage_tables.active_table_ptr].copyIndex(index);
         }
     };
 }

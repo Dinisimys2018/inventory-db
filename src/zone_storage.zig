@@ -28,7 +28,6 @@ pub const ZoneKey = enum {
     data_tables_level_0,
 };
 
-
 pub fn GlobalZoneType() type {
     return struct {
         const GlobalZone = @This();

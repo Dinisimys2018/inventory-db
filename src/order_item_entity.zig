@@ -29,19 +29,21 @@ pub const OrderItem = struct {
         }
     };
 
-    const FieldEntry = std.MultiArrayList(OrderItem).Field;
+    const FieldEntry = Entities.Field;
 
-    const MapFieldTags = struct {
-        order_id: FieldEntry,
-        product_id: FieldEntry,
-        time_label: FieldEntry,
+    pub const Field = enum {
+        order_id,
+        product_id,
+        time_label,
+        quantity,
     };
 
-    pub const map_field_tags: MapFieldTags = .{
+    pub const map_field_tags: std.EnumMap(Field, FieldEntry) = .init(.{
         .order_id = std.meta.stringToEnum(FieldEntry, "order_id") orelse unreachable,
         .product_id = std.meta.stringToEnum(FieldEntry, "product_id") orelse unreachable,
         .time_label = std.meta.stringToEnum(FieldEntry, "time_label") orelse unreachable,
-    };
+        .quantity = std.meta.stringToEnum(FieldEntry, "quantity") orelse unreachable,
+    });
 };
 
 test "OrderItemRow" {

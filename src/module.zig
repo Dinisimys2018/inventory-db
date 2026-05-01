@@ -23,31 +23,29 @@ const ConfigModule = struct {
     level_0_tables_count: u32,
 };
 
+const IndexTable = index_table.IndexTableWithTwoKeysType(
+    Entity,
+    Entity.OrderId,
+    Entity.ProductId,
+    "order_id",
+    "product_id",
+);
+
 pub fn ModuleType(comptime config: ConfigModule) type {
+    const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
+    const entity_size = @sizeOf(Entity);
+    const index_table_size = @sizeOf(IndexTable);
+    const index_tables_level_0_size: usize = index_table_size * config.level_0_tables_count;
+    const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
+
     return struct {
-        const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
-
-        const IndexTable = index_table.IndexTableWithTwoKeysType(
-            Entity,
-            Entity.OrderId,
-            Entity.ProductId,
-            "order_id",
-            "product_id",
-        );
-
-        const entity_size = @sizeOf(Entity);
-        const index_table_size = @sizeOf(IndexTable);
-
-        const index_tables_level_0_size: usize = index_table_size * config.level_0_tables_count;
-        const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
-
         const Module = @This();
         const MemTablesPool = mem_tables.MemTablePoolType(
             config.mem_tables_max_count,
             config.mem_tables_entities_max_count,
         );
 
-         const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(
+        const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(
             config.level_0_tables_count,
         );
 
@@ -118,37 +116,50 @@ pub fn ModuleType(comptime config: ConfigModule) type {
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
 
-                if (inserted + end > entities.len) {
+                if (end > entities.len) {
                     end = entities.len;
                 }
 
                 inserted += try module.pool_mem_tables.insert(io, entities[inserted..end]);
 
                 assert(inserted > 0);
+                end += inserted;
+
                 //TODO: P3 Flush tables on storage - VERY SLOW operation
                 // So, we need to reseach how can return response on client request
                 // without awating for flushing.
                 // For example: we can calculate total rest of entities for tables pool and insert only
                 // slice via info about rest
                 if (inserted >= mem_tables_entites_max_count_per_insert) {
-                    // try module.flushAllFilledMemTables(io);
-                    end += inserted;
+                    try module.flushAllFilledMemTables(io);
                 }
             }
 
             return inserted;
         }
 
+        pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
+            var table_ptr: mem_tables.MemTablePtr = 0;
+            var total_streamed_bytes: usize = 0;
 
-        // pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
-        //     module.index_reader_mem_tables.start();
-        //     _ = try module.storage.streamToZone(io, .index_tables_level_0, module.index_reader_mem_tables);
+            while (table_ptr < module.pool_mem_tables.filled_table_ptrs.len) : (table_ptr += 1) {
+                if (module.pool_mem_tables.filled_table_ptrs[table_ptr]) {
+                    const index = module.pool_mem_tables.getIndex(table_ptr);
+                    const index_bytes = std.mem.asBytes(index);
 
-        //     module.data_reader_mem_tables.start();
-        //     _ = try module.storage.streamToZone(io, .data_tables_level_0, module.data_reader_mem_tables);
+                    try module.storage.writeToZone(io, .index_tables_level_0, index_bytes);
+                    total_streamed_bytes += index_bytes.len;
 
-        //     module.pool_mem_tables.freeFilledTables();
-        // }
+                    inline for (Entity.map_field_tags.values) |field| {
+                        const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field));
+                        try module.storage.writeToZone(io, .data_tables_level_0, field_items_bytes);
+                    }
+
+                    module.level_0_pool_storage_tables.initTable(index);
+                    module.pool_mem_tables.freeFilledTable(table_ptr);
+                }
+            }
+        }
 
         pub fn lookupByOrderId(module: *Module, value: Entity.OrderId) !*const mem_tables.LookupResult {
             const mem_lookup_result = module.pool_mem_tables.lookupByOrderId(value);
@@ -284,7 +295,7 @@ test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" 
         .mem_table_filled_limit = 2,
         .mem_tables_entities_max_count = 5,
         .mem_tables_reader_buffer_size = 4 * 1024,
-        .level_0_tables_count = 5 * 2,
+        .level_0_tables_count = 5 * 20,
     };
 
     var module: *ModuleType(config_module) = try .init(

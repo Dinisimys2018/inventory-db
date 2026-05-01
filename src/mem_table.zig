@@ -84,7 +84,7 @@ pub fn MemTableType(
             for (entities) |entity| {
                 entity.time_label = time_label;
                 mem_table.entities.appendAssumeCapacity(entity.*);
-                
+
                 mem_table.index.insert(entity);
 
                 time_label += 1;
@@ -104,7 +104,7 @@ pub fn MemTableType(
 
             const range = stdx_sort.equalRangeDesc(
                 Entity.OrderId,
-                mem_table.entities.slice().items(Entity.map_field_tags.order_id),
+                mem_table.entities.slice().items(Entity.map_field_tags.get(.order_id)),
                 key_value,
                 stdx_sort.compareNumberKeys(Entity.OrderId),
             );
@@ -121,7 +121,7 @@ pub fn MemTableType(
 
             const range = stdx_sort.equalRangeDesc(
                 Entity.ProductId,
-                mem_table.entities.slice().items(Entity.map_field_tags.product_id),
+                mem_table.entities.slice().items(Entity.map_field_tags.get(.product_id)),
                 key_value,
                 stdx_sort.compareNumberKeys(Entity.ProductId),
             );
@@ -147,7 +147,6 @@ pub fn MemTableType(
 pub fn MemTablePoolType(
     comptime tables_max_count: MemTablePtr,
     comptime entities_max_count: MemEntryPtr,
-
 ) type {
     return struct {
         const MemTablePool = @This();
@@ -189,6 +188,10 @@ pub fn MemTablePoolType(
 
             allocator.free(table_pool.tables);
             allocator.destroy(table_pool);
+        }
+
+        pub fn getIndex(table_pool: *MemTablePool, table_ptr: MemTablePtr) *IndexTable {
+            return table_pool.tables[table_ptr].getIndex();
         }
 
         pub fn insert(table_pool: *MemTablePool, io: std.Io, entities: []*Entity) !usize {
@@ -354,13 +357,10 @@ pub fn MemTablePoolType(
             return current_entity_idx;
         }
 
-        pub fn freeFilledTables(table_pool: *MemTablePool) void {
-            inline for (table_pool.filled_table_ptrs, 0..) |is_filled, table_ptr| {
-                if (is_filled) {
-                    table_pool.filled_table_ptrs[table_ptr] = false;
-                    table_pool.tables[table_ptr].clear();
-                }
-            }
+        pub fn freeFilledTable(table_pool: *MemTablePool, table_ptr: MemTablePtr) void {
+            assert(table_pool.filled_table_ptrs[table_ptr]);
+            table_pool.filled_table_ptrs[table_ptr] = false;
+            table_pool.tables[table_ptr].clear();
         }
 
         //TODO: P5 move to Test scope
