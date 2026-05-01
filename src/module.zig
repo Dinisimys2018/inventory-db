@@ -129,11 +129,10 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
-            var table_ptr: mem_tables.MemTablePtr = 0;
+            var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_ptr;
             var total_streamed_bytes: usize = 0;
 
-            while (table_ptr < module.pool_mem_tables.filled_table_ptrs.len) : (table_ptr += 1) {
-                if (module.pool_mem_tables.filled_table_ptrs[table_ptr]) {
+            while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
                     const index = module.pool_mem_tables.getIndex(table_ptr);
 
                     const index_bytes = std.mem.asBytes(index);
@@ -147,9 +146,10 @@ pub fn ModuleType(comptime config: ConfigModule) type {
                     }
 
                     module.level_0_pool_storage_tables.appendTable(index);
-                    module.pool_mem_tables.freeFilledTable(table_ptr);
-                }
+                    module.pool_mem_tables.clearTable(table_ptr);
             }
+
+            module.pool_mem_tables.swapActiveTable();
         }
 
         pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) !*const mem_tables.LookupResult {
@@ -268,7 +268,7 @@ test "Module:pool_mem_tables: limited filled tables to flush on storage" {
     try testing.expectEqual(entities_total, inserted);
 }
 
-test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" {
+test "cc hModule:pool_mem_tables: full-filled tables pool and all flush on storage" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
     const tmp_dir = testing.tmpDir(.{});

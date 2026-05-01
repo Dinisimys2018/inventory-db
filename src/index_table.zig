@@ -1,22 +1,19 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const assert = std.debug.assert;
 
-pub const IndexTableUnion = union(enum) {
-    complex: IndexTableWithTwoKeysType,
-};
+const printObj = @import("utils/debug.zig").printObj;
 
 pub fn IndexTableWithTwoKeysType(
     comptime Entity: type,
-    comptime _FirstKey: type,
-    comptime _SecondKey: type,
-    comptime first_key_name: []const u8,
-    comptime second_key_name: []const u8,
+    comptime name_first_key: []const u8,
+    comptime name_second_key: []const u8,
 ) type {
     return struct {
         const IndexTable = @This();
         // re-export
-        pub const FirstKey = _FirstKey;
-        pub const SecondKey = _SecondKey;
+        pub const FirstKey = @FieldType(Entity, name_first_key);
+        pub const SecondKey = @FieldType(Entity, name_second_key);
 
         // FIELDS
         min_first_key: FirstKey,
@@ -26,6 +23,7 @@ pub fn IndexTableWithTwoKeysType(
 
         pub fn init(allocator: Allocator) !*IndexTable {
             const index_table = try allocator.create(IndexTable);
+            index_table.clear();
 
             return index_table;
         }
@@ -34,43 +32,34 @@ pub fn IndexTableWithTwoKeysType(
             allocator.destroy(index_table);
         }
 
-        pub fn initAllKeys(
-            index_table: *IndexTable,
-            first_key_value: FirstKey,
-            second_key_value: SecondKey,
-        ) void {
-            index_table.min_first_key = first_key_value;
-            index_table.max_first_key = first_key_value;
-            index_table.min_second_key = second_key_value;
-            index_table.max_second_key = second_key_value;
+        pub fn rewriteMin(index_table: *IndexTable, entity: *const Entity) void {
+            const first_new_value = @field(entity, name_first_key);
+            const second_new_value = @field(entity, name_second_key);
+            
+            assert(index_table.min_first_key == 0 or index_table.min_first_key >= first_new_value);
+            assert(index_table.min_second_key == 0 or index_table.min_second_key >= second_new_value);
+
+            index_table.min_first_key = first_new_value;
+            index_table.min_second_key = second_new_value;
         }
 
-        pub fn maybeRewriteFirstKey(index_table: *IndexTable, key_value: FirstKey) void {
-            if (key_value < index_table.min_first_key) {
-                index_table.min_first_key = key_value;
-            } else if (key_value > index_table.max_first_key) {
-                index_table.max_first_key = key_value;
-            }
+        pub fn rewriteMax(index_table: *IndexTable, entity: *const Entity) void {
+            const first_new_value = @field(entity, name_first_key);
+            const second_new_value = @field(entity, name_second_key);
+
+            assert(index_table.max_first_key == 0 or index_table.max_first_key <= first_new_value);
+            assert(index_table.max_second_key == 0 or index_table.max_second_key <= second_new_value);
+
+            index_table.max_first_key = first_new_value;
+            index_table.max_second_key = second_new_value;
         }
 
-        pub fn maybeRewriteSecondKey(index_table: *IndexTable, key_value: SecondKey) void {
-            if (key_value < index_table.min_second_key) {
-                index_table.min_second_key = key_value;
-            } else if (key_value > index_table.max_second_key) {
-                index_table.max_second_key = key_value;
-            }
-        }
 
         pub fn clear(index_table: *IndexTable) void {
-            index_table.min_first_key = undefined;
-            index_table.max_first_key = undefined;
-            index_table.min_second_key = undefined;
-            index_table.max_second_key = undefined;
-        }
-
-        pub fn insert(index_table: *IndexTable, entity: *const Entity) void {
-            index_table.maybeRewriteFirstKey(@field(entity, first_key_name));
-            index_table.maybeRewriteSecondKey(@field(entity, second_key_name));
+            index_table.min_first_key = 0;
+            index_table.max_first_key = 0;
+            index_table.min_second_key = 0;
+            index_table.max_second_key = 0;
         }
 
         pub fn inFirstInterval(index_table: *IndexTable, key_value: FirstKey) bool {

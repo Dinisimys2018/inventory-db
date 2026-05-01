@@ -51,8 +51,6 @@ pub const OrderItem = struct {
 
     pub const IndexTable = index_table.IndexTableWithTwoKeysType(
         OrderItem,
-        OrderItem.OrderId,
-        OrderItem.ProductId,
         "order_id",
         "product_id",
     );

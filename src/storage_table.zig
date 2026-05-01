@@ -6,17 +6,8 @@ const Io = std.Io;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const Entity = @import("order_item_entity.zig").OrderItem;
 const index_table = @import("index_table.zig");
 const module = @import("module.zig");
-
-const IndexTable = index_table.IndexTableWithTwoKeysType(
-    Entity,
-    Entity.OrderId,
-    Entity.ProductId,
-    "order_id",
-    "product_id",
-);
 
 //TODO: P1 START duplicate code from mem_table
 const EntitiesRange = struct { usize, usize };
@@ -61,6 +52,7 @@ pub fn StorageTableType(
 
 pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type {
     const Components = config.Components();
+    const Index = Components.IndexTable;
 
     return struct {
         const StorageTable = Components.StorageTable;
@@ -70,14 +62,14 @@ pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type 
         // FIELDS
         tables: []*StorageTable,
         count_tables: usize,
-        indexes: []*IndexTable,
+        indexes: []*Index,
         lookup_result: *LookupResult,
 
         pub fn init(allocator: Allocator) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.* = .{
                 .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
-                .indexes = try allocator.alloc(*IndexTable, config.level_0_tables_count),
+                .indexes = try allocator.alloc(*Index, config.level_0_tables_count),
                 .count_tables = 0,
                 .lookup_result = try allocator.create(LookupResult),
             };
@@ -107,7 +99,7 @@ pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type 
             allocator.destroy(pool_storage_tables);
         }
 
-        pub fn appendTable(pool_storage_tables: *PoolStorageTables, index: *IndexTable) void {
+        pub fn appendTable(pool_storage_tables: *PoolStorageTables, index: *Index) void {
             pool_storage_tables.indexes[pool_storage_tables.count_tables].* = index.*;
             pool_storage_tables.count_tables += 1;
         }
