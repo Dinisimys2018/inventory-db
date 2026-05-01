@@ -26,6 +26,7 @@ pub const ConfigModule = struct {
     level_0_tables_count: u32,
 
     pub fn Components(config: *const ConfigModule) type {
+        // Use "struct" only for grouping many type to "namespace"
         return struct {
             pub const Entity = switch (config.entity) {
                 .order_item => OrderItem,
@@ -37,6 +38,7 @@ pub const ConfigModule = struct {
             pub const Storage = storage.StorageType(config);
             pub const StorageTable = storage_table.StorageTableType(config);
             pub const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(config);
+            pub const Module = ModuleType(config);
         };
     }
 };
