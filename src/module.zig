@@ -145,6 +145,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             while (table_ptr < module.pool_mem_tables.filled_table_ptrs.len) : (table_ptr += 1) {
                 if (module.pool_mem_tables.filled_table_ptrs[table_ptr]) {
                     const index = module.pool_mem_tables.getIndex(table_ptr);
+
                     const index_bytes = std.mem.asBytes(index);
 
                     try module.storage.writeToZone(io, .index_tables_level_0, index_bytes);
@@ -155,7 +156,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
                         try module.storage.writeToZone(io, .data_tables_level_0, field_items_bytes);
                     }
 
-                    module.level_0_pool_storage_tables.initTable(index);
+                    module.level_0_pool_storage_tables.appendTable(index);
                     module.pool_mem_tables.freeFilledTable(table_ptr);
                 }
             }

@@ -77,7 +77,7 @@ pub fn StorageType(
             return total_streamed_bytes;
         }
 
-        pub fn writeToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, bytes: []const u8) !void {
+        pub fn writeToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, bytes: []const u8,) !void {
             var zone: *zone_storage.Zone = storage.global_zone.getZone(zone_key);
             // printObj("zone", zone_key);
             // printObj("zone.max_size", zone.max_size);
