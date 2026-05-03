@@ -4,6 +4,7 @@ const assert = std.debug.assert;
 const printObj = @import("utils/debug.zig").printObj;
 
 const index_table = @import("index_table.zig");
+const lookup = @import("lookup.zig");
 
 pub const OrderItem = struct {
     pub const module_name = "order_items";
@@ -54,6 +55,8 @@ pub const OrderItem = struct {
         "order_id",
         "product_id",
     );
+
+    pub const Lookup = lookup.LookupWithTwoKeysType;
 };
 
 test "OrderItemRow" {

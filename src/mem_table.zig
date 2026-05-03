@@ -107,7 +107,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
         active_index: *Index,
 
         sorted_active: bool,
-        active_ptr: MemTablePtr,
+        active_table_ptr: MemTablePtr,
         start_filled_ptr: MemTablePtr,
         state: PoolState,
 
@@ -126,9 +126,9 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             }
 
             mem_table_pool.start_filled_ptr = config.mem_tables_max_count;
-            mem_table_pool.active_ptr = last_table_ptr;
-            mem_table_pool.active_table = mem_table_pool.tables[mem_table_pool.active_ptr];
-            mem_table_pool.active_index = mem_table_pool.indexes[mem_table_pool.active_ptr];
+            mem_table_pool.active_table_ptr = last_table_ptr;
+            mem_table_pool.active_table = mem_table_pool.tables[mem_table_pool.active_table_ptr];
+            mem_table_pool.active_index = mem_table_pool.indexes[mem_table_pool.active_table_ptr];
 
             return mem_table_pool;
         }
@@ -194,9 +194,9 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                     }
                     
                     table_pool.sorted_active = false;
-                    table_pool.active_ptr -= 1;
-                    table_pool.active_table = table_pool.tables[table_pool.active_ptr];
-                    table_pool.active_index = table_pool.indexes[table_pool.active_ptr];
+                    table_pool.active_table_ptr -= 1;
+                    table_pool.active_table = table_pool.tables[table_pool.active_table_ptr];
+                    table_pool.active_index = table_pool.indexes[table_pool.active_table_ptr];
                 }
 
                 entries_start = entries_end;
@@ -214,15 +214,15 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
 
         pub fn swapActiveTable(table_pool: *MemTablePool) void {
             const tmp_index = table_pool.indexes[last_table_ptr].*;
-            table_pool.indexes[last_table_ptr].* = table_pool.indexes[table_pool.active_ptr].*;
-            table_pool.indexes[table_pool.active_ptr].* = tmp_index;
+            table_pool.indexes[last_table_ptr].* = table_pool.indexes[table_pool.active_table_ptr].*;
+            table_pool.indexes[table_pool.active_table_ptr].* = tmp_index;
 
             const tmp_table = table_pool.tables[last_table_ptr].*;
-            table_pool.tables[last_table_ptr].* = table_pool.tables[table_pool.active_ptr].*;
-            table_pool.tables[table_pool.active_ptr].* = tmp_table;
+            table_pool.tables[last_table_ptr].* = table_pool.tables[table_pool.active_table_ptr].*;
+            table_pool.tables[table_pool.active_table_ptr].* = tmp_table;
 
             table_pool.start_filled_ptr = config.mem_tables_max_count;
-            table_pool.active_ptr = last_table_ptr;
+            table_pool.active_table_ptr = last_table_ptr;
 
             table_pool.state = .finished_flush;
         }
@@ -238,14 +238,14 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             table_pool: *MemTablePool,
             table_ptr: MemTablePtr,
             entity_ptr: MemEntryPtr,
-        ) Components.Entity {
-            return table_pool.tables[table_ptr].entities.get(entity_ptr);
+        ) *Components.Entity {
+            return &table_pool.tables[table_ptr].entities.get(entity_ptr);
         }
 
         pub fn getActualEntities(
             mem_table_pool: *MemTablePool,
             lookup_result: *const LookupResult,
-            buffer: []Components.Entity,
+            buffer: []*Components.Entity,
         ) usize {
             var current_entity_idx: usize = 0;
             buffer[0] = mem_table_pool.getOneEntity(

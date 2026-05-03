@@ -11,6 +11,7 @@ const storage = @import("storage.zig");
 const zones_storage = @import("zone_storage.zig");
 const reader_mem_tables = @import("reader_mem_table.zig");
 const storage_table = @import("storage_table.zig");
+const lookup = @import("lookup.zig");
 
 const OrderItem = @import("order_item_entity.zig").OrderItem;
 
@@ -26,11 +27,12 @@ pub const ConfigModule = struct {
     level_0_tables_count: u32,
 
     pub fn Components(config: *const ConfigModule) type {
-        // Use "struct" only for grouping many type to "namespace"
+        // Use "struct" only for grouping many types to one "namespace"
         return struct {
             pub const Entity = switch (config.entity) {
                 .order_item => OrderItem,
             };
+            pub const Lookup = Entity.Lookup(config);
             pub const IndexTable = Entity.IndexTable;
             pub const MemTable = mem_tables.MemTableType(config);
             pub const MemTablesPool = mem_tables.MemTablePoolType(config);
@@ -43,7 +45,7 @@ pub const ConfigModule = struct {
     }
 };
 
-pub fn ModuleType(comptime config: ConfigModule) type {
+pub fn ModuleType(comptime config: *const ConfigModule) type {
     const Components = config.Components();
 
     const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
@@ -51,15 +53,15 @@ pub fn ModuleType(comptime config: ConfigModule) type {
     const index_table_size = @sizeOf(Components.IndexTable);
     const index_tables_level_0_size: usize = index_table_size * config.level_0_tables_count;
     const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
-
+    
     return struct {
         const Module = @This();
 
         // FIELDS
-        config: ConfigModule = config,
+        config: *const ConfigModule = config,
         storage: *Components.Storage,
         pool_mem_tables: *Components.MemTablesPool,
-
+        lookup: *Components.Lookup,
         level_0_pool_storage_tables: *Components.Level_0_PoolStorageTables,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
@@ -80,15 +82,18 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             var module = try allocator.create(Module);
 
             module.pool_mem_tables = try .init(allocator);
+
             module.storage = storage_module;
 
             module.level_0_pool_storage_tables = try .init(allocator);
+            module.lookup = try .init(allocator, module);
 
             return module;
         }
 
         pub fn deinit(module: *Module, allocator: std.mem.Allocator, io: std.Io) void {
             module.storage.deinit(allocator, io);
+            module.lookup.deinit(allocator);
             module.pool_mem_tables.deinit(allocator);
 
             module.level_0_pool_storage_tables.deinit(allocator);
@@ -129,7 +134,7 @@ pub fn ModuleType(comptime config: ConfigModule) type {
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
-            var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_ptr;
+            var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_table_ptr;
             var total_streamed_bytes: usize = 0;
 
             while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
@@ -152,10 +157,8 @@ pub fn ModuleType(comptime config: ConfigModule) type {
             module.pool_mem_tables.swapActiveTable();
         }
 
-        pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) !*const mem_tables.LookupResult {
-            const mem_lookup_result = module.pool_mem_tables.lookupByOrderId(value);
-
-            return mem_lookup_result;
+        pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) void {
+            module.lookup.lookupByFirstKeyInMemory(value);
         }
     };
 }
@@ -307,4 +310,71 @@ test "cc hModule:pool_mem_tables: full-filled tables pool and all flush on stora
     const insert_result = try module.insertToMemTables(io, input_entities);
 
     try testing.expectEqual(entities_total, insert_result);
+}
+
+
+test "Module insert only to memory and lookup" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+    const tmp_dir = testing.tmpDir(.{});
+
+    const config_module: ConfigModule = .{
+        .entity = .order_item,
+        .mem_tables_max_count = 5,
+        .mem_table_filled_limit = 2,
+        .mem_tables_entities_max_count = 5,
+        .level_0_tables_count = 5 * 20,
+    };
+
+    var module: *ModuleType(&config_module) = try .init(
+        allocator,
+        io,
+        tmp_dir.dir,
+    );
+    defer module.deinit(allocator, io);
+    // Preparing input data
+    const entities_total = 4;
+
+    var input_entities = try allocator.alloc(*TestEntity, entities_total);
+    defer allocator.free(input_entities);
+
+    for (0..entities_total) |index| {
+        input_entities[index] = try allocator.create(TestEntity);
+    }
+
+    input_entities[0].* = .{
+        .time_label = 0,
+        .order_id = 1100,
+        .product_id = 110,
+        .quantity = 10,
+    };
+
+    input_entities[1].* = .{
+        .time_label = 0,
+        .order_id = 2200,
+        .product_id = 220,
+        .quantity = 20,
+    };
+
+    input_entities[2].* = .{
+        .time_label = 0,
+        .order_id = 3300,
+        .product_id = 330,
+        .quantity = 30,
+    };
+
+    input_entities[3].* = .{
+        .time_label = 0,
+        .order_id = 2200,
+        .product_id = 440,
+        .quantity = 40,
+    };
+    
+    defer for (input_entities) |entry| allocator.destroy(entry);
+    // -------------------
+
+    //==== General test ====
+    _ = try module.insertToMemTables(io, input_entities);
+    module.lookupByOrderId(2200);
+    printObj("lookup_result", module.lookup.mem_lookup_result);
 }

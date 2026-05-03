@@ -6,14 +6,16 @@ const printObj = @import("utils/debug.zig").printObj;
 
 pub fn IndexTableWithTwoKeysType(
     comptime Entity: type,
-    comptime name_first_key: []const u8,
-    comptime name_second_key: []const u8,
+    comptime _name_first_key: []const u8,
+    comptime _name_second_key: []const u8,
 ) type {
     return struct {
         const IndexTable = @This();
         // re-export
         pub const FirstKey = @FieldType(Entity, name_first_key);
         pub const SecondKey = @FieldType(Entity, name_second_key);
+        pub const name_first_key = _name_first_key;
+        pub const name_second_key = _name_second_key;
 
         // FIELDS
         min_first_key: FirstKey,
@@ -62,11 +64,11 @@ pub fn IndexTableWithTwoKeysType(
             index_table.max_second_key = 0;
         }
 
-        pub fn inFirstInterval(index_table: *IndexTable, key_value: FirstKey) bool {
+        pub fn inFirstKeyInterval(index_table: *IndexTable, key_value: FirstKey) bool {
             return key_value >= index_table.min_first_key and key_value <= index_table.max_first_key;
         }
 
-         pub fn inSecondInterval(index_table: *IndexTable, key_value: SecondKey) bool {
+         pub fn inSecondKeyInterval(index_table: *IndexTable, key_value: SecondKey) bool {
             return key_value >= index_table.min_second_key and key_value <= index_table.max_second_key;
         }
     };
