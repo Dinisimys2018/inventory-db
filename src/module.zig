@@ -25,6 +25,7 @@ pub const ConfigModule = struct {
     mem_table_filled_limit: mem_tables.MemTablePtr,
     mem_tables_entities_max_count: mem_tables.MemEntryPtr,
     level_0_tables_count: u32,
+    limit_lookup_results: u8,
 
     pub fn Components(config: *const ConfigModule) type {
         // Use "struct" only for grouping many types to one "namespace"
@@ -53,7 +54,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
     const index_table_size = @sizeOf(Components.IndexTable);
     const index_tables_level_0_size: usize = index_table_size * config.level_0_tables_count;
     const data_tables_level_0_size: usize = entity_size * config.mem_tables_entities_max_count * config.level_0_tables_count;
-    
+
     return struct {
         const Module = @This();
 
@@ -86,7 +87,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.storage = storage_module;
 
             module.level_0_pool_storage_tables = try .init(allocator);
-            module.lookup = try .init(allocator, module);
+            module.lookup = try .init(allocator, module, config.limit_lookup_results);
 
             return module;
         }
@@ -138,27 +139,29 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             var total_streamed_bytes: usize = 0;
 
             while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
-                    const index = module.pool_mem_tables.getIndex(table_ptr);
+                const index = module.pool_mem_tables.getIndex(table_ptr);
 
-                    const index_bytes = std.mem.asBytes(index);
+                const index_bytes = std.mem.asBytes(index);
 
-                    try module.storage.writeToZone(io, .index_tables_level_0, index_bytes);
-                    total_streamed_bytes += index_bytes.len;
+                try module.storage.writeToZone(io, .index_tables_level_0, index_bytes);
+                total_streamed_bytes += index_bytes.len;
 
-                    inline for (Components.Entity.map_field_tags.values) |field| {
-                        const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field));
-                        try module.storage.writeToZone(io, .data_tables_level_0, field_items_bytes);
-                    }
+                inline for (Components.Entity.map_field_tags.values) |field| {
+                    const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field));
+                    try module.storage.writeToZone(io, .data_tables_level_0, field_items_bytes);
+                }
 
-                    module.level_0_pool_storage_tables.appendTable(index);
-                    module.pool_mem_tables.clearTable(table_ptr);
+                module.level_0_pool_storage_tables.appendTable(index);
+                module.pool_mem_tables.clearTable(table_ptr);
             }
 
             module.pool_mem_tables.swapActiveTable();
         }
 
-        pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) void {
+        pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) []const Components.Entity {
             module.lookup.lookupByFirstKeyInMemory(value);
+            
+            return module.lookup.readResults();
         }
     };
 }
@@ -312,7 +315,6 @@ test "cc hModule:pool_mem_tables: full-filled tables pool and all flush on stora
     try testing.expectEqual(entities_total, insert_result);
 }
 
-
 test "Module insert only to memory and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
@@ -324,6 +326,7 @@ test "Module insert only to memory and lookup" {
         .mem_table_filled_limit = 2,
         .mem_tables_entities_max_count = 5,
         .level_0_tables_count = 5 * 20,
+        .limit_lookup_results = 3,
     };
 
     var module: *ModuleType(&config_module) = try .init(
@@ -369,12 +372,16 @@ test "Module insert only to memory and lookup" {
         .product_id = 440,
         .quantity = 40,
     };
-    
+
     defer for (input_entities) |entry| allocator.destroy(entry);
     // -------------------
 
     //==== General test ====
     _ = try module.insertToMemTables(io, input_entities);
-    module.lookupByOrderId(2200);
-    printObj("lookup_result", module.lookup.mem_lookup_result);
+
+    const lookup_result = module.lookupByOrderId(2200);
+
+    try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
+    try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
+
 }

@@ -13,18 +13,10 @@ const printObj = @import("utils/debug.zig").printObj;
 const stdx_sort = @import("sort.zig");
 const index_table = @import("index_table.zig");
 const module = @import("module.zig");
+const lookup = @import("lookup.zig");
 
-pub const MemTablePtr = u32;
+pub const MemTablePtr = usize;
 pub const MemEntryPtr = usize;
-
-const EntitiesRange = struct { usize, usize };
-
-pub const TableLookupResult = struct {
-    table_ptr: MemTablePtr,
-    entities_range: EntitiesRange,
-};
-
-pub const LookupResult = std.ArrayList(TableLookupResult);
 
 pub fn MemTableType(comptime config: *const module.ConfigModule) type {
     const Components = config.Components();
@@ -64,7 +56,7 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
             return time_label;
         }
 
-        pub fn lookupByOrderId(mem_table: *MemTable, key_value: Components.Entity.OrderId) !EntitiesRange {
+        pub fn lookupByOrderId(mem_table: *MemTable, key_value: Components.Entity.OrderId) !lookup.LookupResult {
             mem_table.primarySort();
 
             const range = stdx_sort.equalRangeDesc(
@@ -234,38 +226,31 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             table_pool.indexes[table_ptr].clear();
         }
 
-        pub fn getOneEntity(
-            table_pool: *MemTablePool,
-            table_ptr: MemTablePtr,
-            entity_ptr: MemEntryPtr,
-        ) *Components.Entity {
-            return &table_pool.tables[table_ptr].entities.get(entity_ptr);
-        }
-
         pub fn getActualEntities(
             mem_table_pool: *MemTablePool,
-            lookup_result: *const LookupResult,
-            buffer: []*Components.Entity,
+            lookup_result: *const lookup.LookupResult,
+            buffer_entities: []Components.Entity,
         ) usize {
+            if (lookup_result.items.len == 0) return 0;
+
             var current_entity_idx: usize = 0;
-            buffer[0] = mem_table_pool.getOneEntity(
-                lookup_result.items[0].table_ptr,
-                lookup_result.items[0].entities_range[0],
-            );
+            const first = lookup_result.items[0];
+            if (first.entities_range[1] <= first.entities_range[0]) return 0;
+            buffer_entities[0] = mem_table_pool.tables[first.table_ptr].entities.get(first.entities_range[0]);
 
             for (lookup_result.items) |table_res| {
                 for (table_res.entities_range[0]..table_res.entities_range[1]) |entity_ptr| {
-                    const lookup_entity = mem_table_pool.getOneEntity(table_res.table_ptr, entity_ptr);
-                    if (buffer[current_entity_idx].order_id != lookup_entity.order_id and buffer[current_entity_idx].product_id != lookup_entity.product_id) {
+                    const lookup_entity = mem_table_pool.tables[table_res.table_ptr].entities.get(entity_ptr);
+
+                    if (buffer_entities[current_entity_idx].order_id != lookup_entity.order_id or buffer_entities[current_entity_idx].product_id != lookup_entity.product_id) {
                         current_entity_idx += 1;
-                        buffer[current_entity_idx] = lookup_entity;
+                        if (current_entity_idx >= buffer_entities.len) return buffer_entities.len;
+                        buffer_entities[current_entity_idx] = lookup_entity;
                     }
                 }
             }
 
-            current_entity_idx += 1;
-
-            return current_entity_idx;
+            return current_entity_idx + 1;
         }
     };
 }

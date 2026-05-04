@@ -13,10 +13,10 @@ pub const OrderItem = struct {
     pub const ProductId = u32;
 
     // FIELDS
-    time_label: u64 = 0,
+    time_label: u64,
     order_id: OrderId,
     product_id: ProductId,
-    quantity: u32 = 0, //100_00 = 100.01
+    quantity: u32, //100_00 = 100.01
 
     pub const Entities = std.MultiArrayList(OrderItem);
 
