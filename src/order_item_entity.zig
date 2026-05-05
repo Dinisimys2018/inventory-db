@@ -1,6 +1,6 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 const assert = std.debug.assert;
-
 const printObj = @import("utils/debug.zig").printObj;
 
 const index_table = @import("index_table.zig");
@@ -9,14 +9,16 @@ const lookup = @import("lookup.zig");
 pub const OrderItem = struct {
     pub const module_name = "order_items";
     
+    pub const TimeLabel = u64;
     pub const OrderId = u32;
     pub const ProductId = u32;
+    pub const Quantity = u32;
 
     // FIELDS
-    time_label: u64,
+    time_label: TimeLabel,
     order_id: OrderId,
     product_id: ProductId,
-    quantity: u32, //100_00 = 100.01
+    quantity: Quantity, //100_00 = 100.01
 
     pub const Entities = std.MultiArrayList(OrderItem);
 
@@ -41,13 +43,33 @@ pub const OrderItem = struct {
         quantity,
     };
 
-    const FieldEntry = Entities.Field;
+    pub const FieldMeta = struct {
+        tag: Entities.Field,
+        size: u16,
+        name: []const u8,
+    };
 
-    pub const map_field_tags: std.EnumMap(Field, Entities.Field) = .init(.{
-        .order_id = std.meta.stringToEnum(FieldEntry, "order_id") orelse unreachable,
-        .product_id = std.meta.stringToEnum(FieldEntry, "product_id") orelse unreachable,
-        .time_label = std.meta.stringToEnum(FieldEntry, "time_label") orelse unreachable,
-        .quantity = std.meta.stringToEnum(FieldEntry, "quantity") orelse unreachable,
+    pub const map_field_tags: std.EnumMap(Field, FieldMeta) = .init(.{
+        .order_id = .{
+            .tag = std.meta.stringToEnum(Entities.Field, "order_id") orelse unreachable,
+            .size = @sizeOf(OrderId),
+            .name = "order_id",
+        },
+        .product_id = .{
+            .tag = std.meta.stringToEnum(Entities.Field, "product_id") orelse unreachable,
+            .size = @sizeOf(ProductId),
+            .name = "product_id",
+        },
+        .time_label = .{
+            .tag = std.meta.stringToEnum(Entities.Field, "time_label") orelse unreachable,
+            .size = @sizeOf(TimeLabel),
+            .name = "time_label",
+        },
+        .quantity = .{
+            .tag = std.meta.stringToEnum(Entities.Field, "quantity") orelse unreachable,
+            .size = @sizeOf(Quantity),
+            .name = "quantity",
+        },
     });
 
     pub const IndexTable = index_table.IndexTableWithTwoKeysType(
@@ -57,6 +79,16 @@ pub const OrderItem = struct {
     );
 
     pub const Lookup = lookup.LookupWithTwoKeysType;
+
+    pub fn init(allocator: Allocator) !*OrderItem {
+        const order_item = try allocator.create(OrderItem);
+
+        return order_item;
+    }
+    
+    pub fn deinit(order_item: *OrderItem, allocator: Allocator) void {
+        allocator.destroy(order_item);
+    }
 };
 
 test "OrderItemRow" {

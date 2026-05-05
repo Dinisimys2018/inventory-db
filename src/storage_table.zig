@@ -6,24 +6,33 @@ const Io = std.Io;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const index_table = @import("index_table.zig");
 const module = @import("module.zig");
 
-//TODO: P1 START duplicate code from mem_table
-const EntitiesRange = struct { usize, usize };
-
-pub const TableLookupResult = struct {
-    table_ptr: usize,
-    entities_range: EntitiesRange,
+const FieldMetaStorage = struct {
+    size: u16,
 };
 
-pub const LookupResult = std.ArrayList(TableLookupResult);
-//TODO: P1 END duplicate code from mem_table
+pub fn HeadersStorageTableType(comptime config: *const module.ConfigModule) type {
+    _ = config;
+    return struct {
+        const HeadersStorageTable = @This();
+        // FIELDS
+        index_size: usize,
+        table_size: usize,
+        fields_meta: std.StringArrayHashMapUnmanaged(FieldMetaStorage),
 
-pub fn StorageTableType(
-    comptime config: *const module.ConfigModule
-) type {
-    
+        pub fn init(allocator: Allocator) !*HeadersStorageTable {
+            const headers = try allocator.create(HeadersStorageTable);
+            return headers;
+        }
+
+        pub fn deinit(headers: *HeadersStorageTable, allocator: Allocator) void {
+            allocator.destroy(headers);
+        }
+    };
+}
+
+pub fn StorageTableType(comptime config: *const module.ConfigModule) type {
     return struct {
         const StorageTable = @This();
 
@@ -43,16 +52,15 @@ pub fn StorageTableType(
             allocator.free(storage_table.buffer_keys);
             allocator.destroy(storage_table);
         }
-
-        // pub fn lookupByFirstKey(storage_table: *StorageTable, io: Io, key_value: IndexTable.FirstKey,) !EntitiesRange {
-    
-        // }
     };
 }
 
-pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type {
+pub fn PoolStorageTablesType(
+    comptime config: *const module.ConfigModule,
+) type {
     const Components = config.Components();
     const Index = Components.IndexTable;
+    const HeadersStorageTable = HeadersStorageTableType(config);
 
     return struct {
         const StorageTable = Components.StorageTable;
@@ -60,48 +68,53 @@ pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type 
         const PoolStorageTables = @This();
 
         // FIELDS
-        tables: []*StorageTable,
-        count_tables: usize,
+        actual_count_tables: usize,
+        headers: []*HeadersStorageTable,
         indexes: []*Index,
-        lookup_result: *LookupResult,
+        tables: []*StorageTable,
 
         pub fn init(allocator: Allocator) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.* = .{
-                .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
+                .headers = try allocator.alloc(*HeadersStorageTable, config.level_0_tables_count),
                 .indexes = try allocator.alloc(*Index, config.level_0_tables_count),
-                .count_tables = 0,
-                .lookup_result = try allocator.create(LookupResult),
+                .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
+                .actual_count_tables = 0,
             };
 
             for (0..config.level_0_tables_count) |table_ptr| {
-                pool_storage_tables.tables[table_ptr] = try .init(allocator);
+                pool_storage_tables.headers[table_ptr] = try .init(allocator);
                 pool_storage_tables.indexes[table_ptr] = try .init(allocator);
+                pool_storage_tables.tables[table_ptr] = try .init(allocator);
             }
-            pool_storage_tables.lookup_result.* = try .initCapacity(allocator, config.level_0_tables_count);
 
             return pool_storage_tables;
         }
 
         pub fn deinit(pool_storage_tables: *PoolStorageTables, allocator: Allocator) void {
-            pool_storage_tables.lookup_result.deinit(allocator);
-            allocator.destroy(pool_storage_tables.lookup_result);
+            for (pool_storage_tables.headers) |headers| {
+                headers.deinit(allocator);
+            }
+
+            allocator.free(pool_storage_tables.headers);
 
             for (pool_storage_tables.indexes) |index| {
                 index.deinit(allocator);
             }
+            allocator.free(pool_storage_tables.indexes);
+
             for (pool_storage_tables.tables) |table| {
                 table.deinit(allocator);
             }
-            allocator.free(pool_storage_tables.indexes);
+
             allocator.free(pool_storage_tables.tables);
 
             allocator.destroy(pool_storage_tables);
         }
 
         pub fn appendTable(pool_storage_tables: *PoolStorageTables, index: *Index) void {
-            pool_storage_tables.indexes[pool_storage_tables.count_tables].* = index.*;
-            pool_storage_tables.count_tables += 1;
+            pool_storage_tables.indexes[pool_storage_tables.actual_count_tables].* = index.*;
+            pool_storage_tables.actual_count_tables += 1;
         }
 
         // pub fn lookupByFirstKey(pool_storage_tables: *PoolStorageTables, key_value: IndexTable.FirstKey) !*const LookupResult {
@@ -110,7 +123,7 @@ pub fn PoolStorageTablesType(comptime config: *const module.ConfigModule,) type 
         //     //TODO: P3 need to check how we can clear result not before each lookup, but after this
         //     pool_storage_tables.lookup_result.clearRetainingCapacity();
 
-        //     var last_indx = pool_storage_tables.count_tables;
+        //     var last_indx = pool_storage_tables.actual_count_tables;
 
         //     while (last_indx > 0) {
         //         last_indx -= 1;

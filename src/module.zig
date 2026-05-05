@@ -5,13 +5,13 @@ const Io = std.Io;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const mem_tables = @import("mem_table.zig");
-const index_table = @import("index_table.zig");
-const storage = @import("storage.zig");
-const zones_storage = @import("zone_storage.zig");
-const reader_mem_tables = @import("reader_mem_table.zig");
-const storage_table = @import("storage_table.zig");
-const lookup = @import("lookup.zig");
+pub const mem_tables = @import("mem_table.zig");
+pub const index_table = @import("index_table.zig");
+pub const storage = @import("storage.zig");
+pub const zones_storage = @import("zone_storage.zig");
+pub const reader_mem_tables = @import("reader_mem_table.zig");
+pub const storage_table = @import("storage_table.zig");
+pub const lookup = @import("lookup.zig");
 
 const OrderItem = @import("order_item_entity.zig").OrderItem;
 
@@ -59,6 +59,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         const Module = @This();
 
         // FIELDS
+        time_label: u64,
         config: *const ConfigModule = config,
         storage: *Components.Storage,
         pool_mem_tables: *Components.MemTablesPool,
@@ -147,7 +148,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                 total_streamed_bytes += index_bytes.len;
 
                 inline for (Components.Entity.map_field_tags.values) |field| {
-                    const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field));
+                    const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
                     try module.storage.writeToZone(io, .data_tables_level_0, field_items_bytes);
                 }
 
@@ -159,9 +160,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) []const Components.Entity {
-            module.lookup.lookupByFirstKeyInMemory(value);
-            
-            return module.lookup.readResults();
+            return module.lookup.lookupByFirstKey(value);
         }
     };
 }
@@ -381,6 +380,7 @@ test "Module insert only to memory and lookup" {
 
     const lookup_result = module.lookupByOrderId(2200);
 
+    try testing.expectEqual(2, lookup_result.len);
     try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
     try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
 

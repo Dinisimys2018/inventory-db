@@ -26,10 +26,10 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
         module: *Components.Module,
         mem_lookup_result: *LookupResult,
         level_0_lookup_result: *LookupResult,
-        limit: u8,
+        limit: usize,
         buffer_entities: []Components.Entity,
 
-        pub fn init(allocator: Allocator, module: *Components.Module, limit: u8) !*Lookup {
+        pub fn init(allocator: Allocator, module: *Components.Module, limit: usize) !*Lookup {
             assert(limit <= 200 and limit >= 1);
 
             const lookup = try allocator.create(Lookup);
@@ -56,10 +56,27 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
             allocator.destroy(lookup);
         }
 
+        pub fn lookupByFirstKey(
+            lookup: *Lookup,
+            key_value: Components.IndexTable.FirstKey,
+        ) []const Components.Entity {
+            var limit = lookup.limit;
+            var count: usize = 0;
+            count = lookup.lookupByFirstKeyInMemory(key_value, limit);
+
+            if (count < limit) {
+                limit -= count;
+                count += lookup.lookupByFirstKeyInLevel0(key_value, limit);
+            }
+
+            return lookup.readResults();
+        }
+
         pub fn lookupByFirstKeyInMemory(
             lookup: *Lookup,
             key_value: Components.IndexTable.FirstKey,
-        ) void {
+            limit: usize,
+        ) usize {
             assert(key_value != 0);
 
             //TODO: P3 need to check how we can clear result not before each lookup, but after this
@@ -68,7 +85,8 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
             var table_ptr = lookup.module.pool_mem_tables.active_table_ptr;
             var mem_table: *Components.MemTable = undefined;
             var index: *Components.IndexTable = undefined;
-           
+            var count: usize = 0;
+
             while (table_ptr < lookup.module.pool_mem_tables.tables.len) : (table_ptr += 1) {
                 mem_table = lookup.module.pool_mem_tables.tables[table_ptr];
                 index = lookup.module.pool_mem_tables.indexes[table_ptr];
@@ -76,22 +94,39 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                 if (index.inFirstKeyInterval(key_value)) {
                     var entities_range = stdx_sort.equalRangeDesc(
                         Components.Entity.OrderId,
-                        mem_table.entities.slice().items(first_key_meta),
+                        mem_table.entities.slice().items(first_key_meta.tag),
                         key_value,
                         stdx_sort.compareNumberKeys(Components.IndexTable.FirstKey),
                     );
 
-                    if (entities_range[1] == 0) return;
+                    if (entities_range[1] == 0) return count;
 
-                    if (entities_range[1] > lookup.limit) {
-                        entities_range[1] = lookup.limit;
+                    count += entities_range[1];
+                    if (count > limit) {
+                        entities_range[1] = entities_range[1] - limit - count;
                     }
+
                     lookup.mem_lookup_result.appendAssumeCapacity(.{
                         .table_ptr = table_ptr,
                         .entities_range = entities_range,
                     });
                 }
             }
+
+            return lookup.mem_lookup_result.items.len;
+        }
+
+        pub fn lookupByFirstKeyInLevel0(
+            lookup: *Lookup,
+            key_value: Components.IndexTable.FirstKey,
+            limit: usize,
+        ) usize {
+            assert(key_value != 0);
+
+            //TODO: P3 need to check how we can clear result not before each lookup, but after this
+            lookup.level_0_lookup_result.clearRetainingCapacity();
+            
+            return limit;
         }
 
         pub fn readResults(
@@ -104,12 +139,5 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
             return lookup.buffer_entities[0..count];
         }
-
-        // pub fn lookupByFirstKeyInLevel0(lookup: *Lookup, key_value: Components.IndexTable.FirstKey,) !*const LookupResult  {
-        //     assert(key_value != 0);
-
-        // }
-
-
     };
 }

@@ -73,8 +73,13 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             return total_streamed_bytes;
         }
 
-        pub fn writeToZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, bytes: []const u8,) !void {
-            var zone: *zone_storage.Zone = storage.global_zone.getZone(zone_key);
+        pub fn writeToZone(
+            storage: *Storage,
+            io: Io,
+            zone_key: zone_storage.ZoneKey,
+            bytes: []const u8,
+        ) !void {
+            var zone = storage.global_zone.getZone(zone_key);
 
             assert(bytes.len <= zone.max_size - zone.position);
 
@@ -83,16 +88,17 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             zone.position += bytes.len;
         }
 
-        pub fn readFromZone(storage: *Storage, io: Io, zone_key: zone_storage.ZoneKey, bytes: []const u8,) !void {
-            var zone: *zone_storage.Zone = storage.global_zone.getZone(zone_key);
+        pub fn readFromZone(
+            storage: *Storage,
+            io: Io,
+            zone_key: zone_storage.ZoneKey,
+            position: usize,
+            buffer: []u8,
+        ) !void {
+            const zone = storage.global_zone.getZone(zone_key);
 
-            assert(bytes.len <= zone.max_size - zone.position);
-
-            try storage.file.writePositionalAll(io, bytes, zone.position);
-
-            zone.position += bytes.len;
+            try storage.file.readPositionalAll(io, buffer, zone.offset + position);
         }
-
     };
 }
 
@@ -102,21 +108,20 @@ fn testRenderMapZones(allocator: std.mem.Allocator) !zone_storage.MapZones {
     var map_zones: zone_storage.MapZones = .init(.{});
     var global_offset: usize = 0;
 
-    const meta_tables_level_0: *zone_storage.Zone = try .init(allocator, global_offset , 100);
+    const meta_tables_level_0: *zone_storage.Zone = try .init(allocator, global_offset, 100);
     map_zones.put(.meta_tables_level_0, meta_tables_level_0);
 
     global_offset += meta_tables_level_0.max_size;
-    
-    const data_tables_level_0: *zone_storage.Zone = try .init(allocator, global_offset , 100);
+
+    const data_tables_level_0: *zone_storage.Zone = try .init(allocator, global_offset, 100);
     map_zones.put(.data_tables_level_0, data_tables_level_0);
-    
+
     global_offset += data_tables_level_0.max_size;
 
     return map_zones;
 }
 
-const OrderStorage =  StorageType("orders", 4 * 1024);
-
+const OrderStorage = StorageType("orders", 4 * 1024);
 
 test "Storage: check exists data file" {
     const allocator = testing.allocator;
@@ -125,7 +130,7 @@ test "Storage: check exists data file" {
     const tmp_dir = testing.tmpDir(.{});
     const map_zones = try testRenderMapZones(allocator);
     defer {
-        for(map_zones.values) |zone| {
+        for (map_zones.values) |zone| {
             allocator.destroy(zone);
         }
     }
