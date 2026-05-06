@@ -8,6 +8,47 @@ const printObj = @import("utils/debug.zig").printObj;
 
 const m_module = @import("module.zig");
 
+pub fn HeadersStorageLevelType(comptime config: *const m_module.ConfigModule, level: u8) type {
+    const Components = config.Components();
+    const actual_index_size = switch (level) {
+        0 => Components.level_0_index_size,
+        else => unreachable,
+    };
+    const actual_table_size = switch (level) {
+        0 => Components.level_0_table_size,
+        else => unreachable,
+    };
+
+    const actual_tables_count = switch (level) {
+        0 => config.level_0_tables_count,
+        else => unreachable,
+    };
+
+    return struct {
+        const HeadersStorageLevel = @This();
+        // FIELDS
+        index_size: usize,
+        table_size: usize,
+        tables_count: usize,
+
+        pub fn init(allocator: Allocator) !*HeadersStorageLevel {
+            const headers = try allocator.create(HeadersStorageLevel);
+            //TODO: P2 REBUILD
+            // Research how we can restore headers and resolve conflicts of configs
+            headers.* = .{
+                .index_size = actual_index_size,
+                .table_size = actual_table_size,
+                .tables_count = actual_tables_count,
+            };
+
+            return headers;
+        }
+
+        pub fn deinit(headers: *HeadersStorageLevel, allocator: Allocator) void {
+            allocator.destroy(headers);
+        }
+    };
+}
 
 pub fn PoolStorageTablesType(
     comptime config: *const m_module.ConfigModule,
@@ -15,59 +56,46 @@ pub fn PoolStorageTablesType(
 ) type {
     const Components = config.Components();
     const Index = Components.IndexTable;
-    const index_size = switch (level) {
-        0 => Components.level_0_index_size,
-        else => unreachable,
-    };
-    const table_size = switch (level) {
-        0 => Components.level_0_table_size,
-        else => unreachable,
-    };
-
+    const HeadersStorageLevel = HeadersStorageLevelType(config, level);
 
     return struct {
-        const StorageTable = Components.StorageTable;
-
         const PoolStorageTables = @This();
 
         // FIELDS
-        module: *Components.Module,
+        headers: *HeadersStorageLevel,
         actual_count_tables: usize,
         indexes: []*Index,
         table_offsets: []usize,
 
-        pub fn init(allocator: Allocator, module: *Components.Module) !*PoolStorageTables {
+        pub fn init(allocator: Allocator) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.* = .{
-                .module = module,
-                .indexes = try allocator.alloc(*Index, config.level_0_tables_count),
-                .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
+                // TODO: P5 REBUILD
+                // loading from storage for working between diferrent configs
+                .headers = try .init(allocator),
                 .actual_count_tables = 0,
             };
 
-            for (0..config.level_0_tables_count) |table_ptr| {
-                // TODO: P5 REBUILD
-                // loading from storage for working between diferrent verions fields meta
-                pool_storage_tables.indexes[table_ptr] = try .init(allocator);
-                pool_storage_tables.tables[table_ptr] = try .init(allocator);
+            pool_storage_tables.indexes = try allocator.alloc(*Index, pool_storage_tables.headers.tables_count);
+            pool_storage_tables.table_offsets = try allocator.alloc(usize, pool_storage_tables.headers.tables_count);
 
-                pool_storage_tables.table_offsets[table_ptr] = table_ptr * module.storage_table_headers.table_size;
+            for (0..pool_storage_tables.headers.tables_count) |table_ptr| {
+                pool_storage_tables.indexes[table_ptr] = try .init(allocator);
+                pool_storage_tables.table_offsets[table_ptr] = table_ptr * pool_storage_tables.headers.table_size;
             }
 
             return pool_storage_tables;
         }
 
         pub fn deinit(pool_storage_tables: *PoolStorageTables, allocator: Allocator) void {
+            pool_storage_tables.headers.deinit(allocator);
+
             for (pool_storage_tables.indexes) |index| {
                 index.deinit(allocator);
             }
             allocator.free(pool_storage_tables.indexes);
 
-            for (pool_storage_tables.tables) |table| {
-                table.deinit(allocator);
-            }
-
-            allocator.free(pool_storage_tables.tables);
+            allocator.free(pool_storage_tables.table_offsets);
 
             allocator.destroy(pool_storage_tables);
         }
@@ -79,8 +107,8 @@ pub fn PoolStorageTablesType(
 
         pub fn readFieldSector(pool_storage_tables: *PoolStorageTables, io: Io, table_ptr: usize, field: Components.Entity.Field) !void {
             const headers = pool_storage_tables.headers_list[table_ptr];
-            const position =
-                try pool_storage_tables.module.storage.readFromZone(io, .tables_level_0, position, buffer);
+            const offset_field = pool_storage_tables.table_offsets[table_ptr];
+            try pool_storage_tables.module.storage.readFromZone(io, .tables_level_0, position, buffer);
         }
     };
 }

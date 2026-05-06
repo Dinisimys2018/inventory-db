@@ -50,11 +50,9 @@ pub const ConfigModule = struct {
             pub const mem_index_size = @sizeOf(IndexTable);
             pub const mem_table_size = entity_size * config.mem_tables_entities_max_count;
 
-            pub const level_0_headers_table_size = @sizeOf(HeadersStorageTable);
             pub const level_0_table_size = mem_table_size;
             pub const level_0_index_size = mem_index_size;
             
-            pub const level_0_many_headers_size = level_0_headers_table_size * config.level_0_tables_count;
             pub const level_0_indexes_size: usize = level_0_index_size * config.level_0_tables_count;
             pub const level_0_tables_size: usize = level_0_table_size * config.level_0_tables_count;
         };
@@ -75,8 +73,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         pool_mem_tables: *Components.MemTablesPool,
         lookup: *Components.Lookup,
         level_0_pool_storage_tables: *Components.Level_0_PoolStorageTables,
-        storage_table_headers: *Components.HeadersStorageTable,
-        storage_table_headers_encoded: [Components.level_0_headers_table_size]u8,
 
         pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *Components.GlobalZoneStorage = try .init(allocator, 0);
@@ -102,9 +98,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.pool_mem_tables = try .init(allocator);
 
             module.storage = storage_module;
-            module.storage_table_headers = try .initBasedOnActual(allocator, module.map_fields_meta);
-            module.storage_table_headers_encoded = std.mem.asBytes(module.storage_table_headers).*;
-
             module.level_0_pool_storage_tables = try .init(allocator, module);
             module.lookup = try .init(allocator, module, config.limit_lookup_results);
 
