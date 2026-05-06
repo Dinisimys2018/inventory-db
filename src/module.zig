@@ -41,9 +41,7 @@ pub const ConfigModule = struct {
             pub const MemTablesPool = mem_tables.MemTablePoolType(config);
             pub const GlobalZoneStorage = zones_storage.GlobalZoneType(config);
             pub const Storage = storage.StorageType(config);
-            pub const HeadersStorageTable = storage_table.HeadersStorageTableType(config);
-            pub const StorageTable = storage_table.StorageTableType(config);
-            pub const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(config);
+            pub const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(config, 0);
             pub const Lookup = Entity.Lookup(config);
 
             // CONSTANTS
