@@ -137,6 +137,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                 index = lookup.module.level_0_pool_storage_tables.indexes[table_ptr];
 
                 if (index.inFirstKeyInterval(key_value)) {
+                    
                     lookup.level_0_lookup_result.appendAssumeCapacity(.{
                         .table_ptr = table_ptr,
                         .entities_range = .{1, 1},

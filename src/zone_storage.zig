@@ -48,19 +48,24 @@ pub fn GlobalZoneType(comptime config: *const module.ConfigModule) type {
             global_zone.max_size = 0;
             global_zone.next_zone_offset = 0;
             global_zone.map_zones = .init(.{});
-            
+
             return global_zone;
         }
 
         pub fn deinit(global_zone: *GlobalZone, allocator: Allocator) void {
             var map_zones_iter = global_zone.map_zones.iterator();
-            while(map_zones_iter.next()) |entry| {
+            while (map_zones_iter.next()) |entry| {
                 entry.value.*.deinit(allocator);
             }
             allocator.destroy(global_zone);
         }
 
-        pub fn initZone(global_zone: *GlobalZone, allocator: Allocator, key: ZoneKey, max_size: usize,) !void {
+        pub fn initZone(
+            global_zone: *GlobalZone,
+            allocator: Allocator,
+            key: ZoneKey,
+            max_size: usize,
+        ) !void {
             var zone = try allocator.create(Zone);
             global_zone.map_zones.put(key, zone);
             zone.max_size = max_size;

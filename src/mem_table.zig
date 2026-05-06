@@ -147,7 +147,9 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             // TODO: Temporary solution, lock insert in flushing proccess,
             // but not need lock active table for concurrency inserting
             assert(table_pool.state == .finished_flush or table_pool.state == .empty);
-
+            if (table_pool.start_filled_ptr == 0) {
+                return 0;
+            }
             table_pool.sorted_active = false;
             var entries_start: usize = 0;
             var entries_end: usize = 0;

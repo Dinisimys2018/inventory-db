@@ -20,6 +20,8 @@ pub fn HeadersStorageTableType(comptime config: *const m_module.ConfigModule) ty
         fields_meta: *const MapMetaFields,
 
         pub fn initBasedOnActual(allocator: Allocator, fields_meta: *const MapMetaFields) !*HeadersStorageTable {
+            // Module is ownership of actual_headers memory
+
             const headers = try allocator.create(HeadersStorageTable);
             headers.* = .{
                 .index_size = Components.level_0_index_size,
@@ -74,7 +76,7 @@ pub fn PoolStorageTablesType(
         // FIELDS
         module: *Components.Module,
         actual_count_tables: usize,
-        headers: []*HeadersStorageTable,
+        headers_list: []*HeadersStorageTable,
         indexes: []*Index,
         tables: []*StorageTable,
 
@@ -82,16 +84,17 @@ pub fn PoolStorageTablesType(
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.* = .{
                 .module = module,
-                .headers = try allocator.alloc(*HeadersStorageTable, config.level_0_tables_count),
+                .headers_list = try allocator.alloc(*HeadersStorageTable, config.level_0_tables_count),
                 .indexes = try allocator.alloc(*Index, config.level_0_tables_count),
                 .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
                 .actual_count_tables = 0,
+
             };
 
             for (0..config.level_0_tables_count) |table_ptr| {
                 // TODO: P5 REBUILD
                 // loading from storage for working between diferrent verions fields meta
-                pool_storage_tables.headers[table_ptr] = try .initBasedOnActual(allocator, module.map_fields_meta);
+                pool_storage_tables.headers_list[table_ptr] = module.storage_table_headers;
                 pool_storage_tables.indexes[table_ptr] = try .init(allocator);
                 pool_storage_tables.tables[table_ptr] = try .init(allocator);
             }
@@ -100,11 +103,7 @@ pub fn PoolStorageTablesType(
         }
 
         pub fn deinit(pool_storage_tables: *PoolStorageTables, allocator: Allocator) void {
-            for (pool_storage_tables.headers) |headers| {
-                headers.deinit(allocator);
-            }
-
-            allocator.free(pool_storage_tables.headers);
+            allocator.free(pool_storage_tables.headers_list);
 
             for (pool_storage_tables.indexes) |index| {
                 index.deinit(allocator);
@@ -123,6 +122,13 @@ pub fn PoolStorageTablesType(
         pub fn appendTable(pool_storage_tables: *PoolStorageTables, index: *Index) void {
             pool_storage_tables.indexes[pool_storage_tables.actual_count_tables].* = index.*;
             pool_storage_tables.actual_count_tables += 1;
+        }
+
+        pub fn readFieldSector(pool_storage_tables: *PoolStorageTables, io: Io,  table_ptr: usize, field: Components.Entity.Field) !void {
+            const headers = pool_storage_tables.headers[table_ptr];
+            const position = 
+            
+            try pool_storage_tables.module.storage.readFromZone(io, .tables_level_0, position, buffer);
         }
     };
 }
