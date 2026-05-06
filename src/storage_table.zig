@@ -6,23 +6,27 @@ const Io = std.Io;
 
 const printObj = @import("utils/debug.zig").printObj;
 
-const module = @import("module.zig");
+const m_module = @import("module.zig");
 
-const FieldMetaStorage = struct {
-    size: u16,
-};
+pub fn HeadersStorageTableType(comptime config: *const m_module.ConfigModule) type {
+    const Components = config.Components();
+    const MapMetaFields = Components.Entity.MapMetaFields;
 
-pub fn HeadersStorageTableType(comptime config: *const module.ConfigModule) type {
-    _ = config;
     return struct {
         const HeadersStorageTable = @This();
         // FIELDS
         index_size: usize,
         table_size: usize,
-        fields_meta: std.StringArrayHashMapUnmanaged(FieldMetaStorage),
+        fields_meta: *const MapMetaFields,
 
-        pub fn init(allocator: Allocator) !*HeadersStorageTable {
+        pub fn initBasedOnActual(allocator: Allocator, fields_meta: *const MapMetaFields) !*HeadersStorageTable {
             const headers = try allocator.create(HeadersStorageTable);
+            headers.* = .{
+                .index_size = Components.level_0_index_size,
+                .table_size = Components.level_0_table_size,
+                .fields_meta = fields_meta,
+            };
+
             return headers;
         }
 
@@ -32,12 +36,12 @@ pub fn HeadersStorageTableType(comptime config: *const module.ConfigModule) type
     };
 }
 
-pub fn StorageTableType(comptime config: *const module.ConfigModule) type {
+pub fn StorageTableType(comptime config: *const m_module.ConfigModule) type {
+
     return struct {
         const StorageTable = @This();
 
         // FIELDS
-
         buffer_keys: []u8,
 
         pub fn init(allocator: Allocator) !*StorageTable {
@@ -56,7 +60,7 @@ pub fn StorageTableType(comptime config: *const module.ConfigModule) type {
 }
 
 pub fn PoolStorageTablesType(
-    comptime config: *const module.ConfigModule,
+    comptime config: *const m_module.ConfigModule,
 ) type {
     const Components = config.Components();
     const Index = Components.IndexTable;
@@ -68,14 +72,16 @@ pub fn PoolStorageTablesType(
         const PoolStorageTables = @This();
 
         // FIELDS
+        module: *Components.Module,
         actual_count_tables: usize,
         headers: []*HeadersStorageTable,
         indexes: []*Index,
         tables: []*StorageTable,
 
-        pub fn init(allocator: Allocator) !*PoolStorageTables {
+        pub fn init(allocator: Allocator, module: *Components.Module) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             pool_storage_tables.* = .{
+                .module = module,
                 .headers = try allocator.alloc(*HeadersStorageTable, config.level_0_tables_count),
                 .indexes = try allocator.alloc(*Index, config.level_0_tables_count),
                 .tables = try allocator.alloc(*StorageTable, config.level_0_tables_count),
@@ -83,7 +89,9 @@ pub fn PoolStorageTablesType(
             };
 
             for (0..config.level_0_tables_count) |table_ptr| {
-                pool_storage_tables.headers[table_ptr] = try .init(allocator);
+                // TODO: P5 REBUILD
+                // loading from storage for working between diferrent verions fields meta
+                pool_storage_tables.headers[table_ptr] = try .initBasedOnActual(allocator, module.map_fields_meta);
                 pool_storage_tables.indexes[table_ptr] = try .init(allocator);
                 pool_storage_tables.tables[table_ptr] = try .init(allocator);
             }
@@ -116,30 +124,5 @@ pub fn PoolStorageTablesType(
             pool_storage_tables.indexes[pool_storage_tables.actual_count_tables].* = index.*;
             pool_storage_tables.actual_count_tables += 1;
         }
-
-        // pub fn lookupByFirstKey(pool_storage_tables: *PoolStorageTables, key_value: IndexTable.FirstKey) !*const LookupResult {
-        //     assert(key_value != 0);
-
-        //     //TODO: P3 need to check how we can clear result not before each lookup, but after this
-        //     pool_storage_tables.lookup_result.clearRetainingCapacity();
-
-        //     var last_indx = pool_storage_tables.actual_count_tables;
-
-        //     while (last_indx > 0) {
-        //         last_indx -= 1;
-        //         if (pool_storage_tables.indexes[last_indx].inFirstInterval(key_value)) {
-        //             const entities_range = pool_storage_tables.tables[last_indx].lookupByFirstKey(key_value) catch continue;
-
-        //             pool_storage_tables.lookup_result.appendAssumeCapacity(.{
-        //                 .table_ptr = last_indx,
-        //                 .entities_range = entities_range,
-        //             });
-        //         }
-        //     }
-
-        //     if (pool_storage_tables.lookup_result.items.len > 0) return pool_storage_tables.lookup_result;
-
-        //     return error.NotFound;
-        // }
     };
 }

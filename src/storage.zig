@@ -114,7 +114,7 @@ fn testRenderMapZones(allocator: std.mem.Allocator) !zone_storage.MapZones {
     global_offset += meta_tables_level_0.max_size;
 
     const data_tables_level_0: *zone_storage.Zone = try .init(allocator, global_offset, 100);
-    map_zones.put(.data_tables_level_0, data_tables_level_0);
+    map_zones.put(.entities_level_0, data_tables_level_0);
 
     global_offset += data_tables_level_0.max_size;
 

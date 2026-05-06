@@ -8,7 +8,7 @@ const lookup = @import("lookup.zig");
 
 pub const OrderItem = struct {
     pub const module_name = "order_items";
-    
+
     pub const TimeLabel = u64;
     pub const OrderId = u32;
     pub const ProductId = u32;
@@ -49,7 +49,9 @@ pub const OrderItem = struct {
         name: []const u8,
     };
 
-    pub const map_field_tags: std.EnumMap(Field, FieldMeta) = .init(.{
+    pub const MapMetaFields = std.EnumMap(Field, FieldMeta);
+
+    pub const map_fields_meta: MapMetaFields = .init(.{
         .order_id = .{
             .tag = std.meta.stringToEnum(Entities.Field, "order_id") orelse unreachable,
             .size = @sizeOf(OrderId),
@@ -72,6 +74,8 @@ pub const OrderItem = struct {
         },
     });
 
+    pub const values_map_field_tags: [4]FieldMeta = map_fields_meta.values();
+
     pub const IndexTable = index_table.IndexTableWithTwoKeysType(
         OrderItem,
         "order_id",
@@ -85,7 +89,7 @@ pub const OrderItem = struct {
 
         return order_item;
     }
-    
+
     pub fn deinit(order_item: *OrderItem, allocator: Allocator) void {
         allocator.destroy(order_item);
     }

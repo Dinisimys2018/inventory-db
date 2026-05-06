@@ -25,9 +25,9 @@ pub const Zone = struct {
 };
 
 pub const ZoneKey = enum {
-    headers_tables_level_0,
-    index_tables_level_0,
-    data_tables_level_0,
+    headers_level_0,
+    indexes_level_0,
+    tables_level_0,
 };
 
 pub fn GlobalZoneType(comptime config: *const module.ConfigModule) type {

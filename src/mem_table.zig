@@ -61,7 +61,7 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
 
             const range = stdx_sort.equalRangeDesc(
                 Components.Entity.OrderId,
-                mem_table.entities.slice().items(Components.Entity.map_field_tags.get(.order_id)),
+                mem_table.entities.slice().items(Components.Entity.map_fields_meta.get(.order_id)),
                 key_value,
                 stdx_sort.compareNumberKeys(Components.Entity.OrderId),
             );
@@ -184,7 +184,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                     if (table_pool.start_filled_ptr == 0) {
                         return entries_end;
                     }
-                    
+
                     table_pool.sorted_active = false;
                     table_pool.active_table_ptr -= 1;
                     table_pool.active_table = table_pool.tables[table_pool.active_table_ptr];

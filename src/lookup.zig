@@ -17,7 +17,7 @@ pub const LookupResult = std.ArrayList(TableLookupResult);
 
 pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type {
     const Components = config.Components();
-    const first_key_meta = comptime Components.Entity.map_field_tags.getAssertContains(.order_id);
+    const first_key_meta = comptime Components.Entity.map_fields_meta.getAssertContains(.order_id);
 
     return struct {
         const Lookup = @This();
@@ -62,7 +62,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
         ) []const Components.Entity {
             var limit = lookup.limit;
             var count: usize = 0;
-            count = lookup.lookupByFirstKeyInMemory(key_value, limit);
+            // count = lookup.lookupByFirstKeyInMemory(key_value, limit);
 
             if (count < limit) {
                 limit -= count;
@@ -125,8 +125,26 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
             //TODO: P3 need to check how we can clear result not before each lookup, but after this
             lookup.level_0_lookup_result.clearRetainingCapacity();
-            
-            return limit;
+
+            var table_ptr: usize = 0;
+            var table: *Components.StorageTable = undefined;
+            var index: *Components.IndexTable = undefined;
+            // var count: usize = 0;
+            _ = limit;
+
+            while (table_ptr < lookup.module.level_0_pool_storage_tables.actual_count_tables) : (table_ptr += 1) {
+                table = lookup.module.level_0_pool_storage_tables.tables[table_ptr];
+                index = lookup.module.level_0_pool_storage_tables.indexes[table_ptr];
+
+                if (index.inFirstKeyInterval(key_value)) {
+                    lookup.level_0_lookup_result.appendAssumeCapacity(.{
+                        .table_ptr = table_ptr,
+                        .entities_range = .{1, 1},
+                    });
+                }
+            }
+
+            return lookup.level_0_lookup_result.items.len;
         }
 
         pub fn readResults(
