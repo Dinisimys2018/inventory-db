@@ -20,7 +20,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
         global_zone: *Components.GlobalZoneStorage,
 
         pub fn init(allocator: std.mem.Allocator, io: Io, base_dir: Io.Dir, global_zone: *Components.GlobalZoneStorage) !*Storage {
-            const file_open = base_dir.openFile(io, Components.Entity.module_name, .{});
+            const file_open = base_dir.openFile(io, Components.Entity.module_name, .{.mode = .read_write});
 
             // !!! Data file can't be rewrited
             if (file_open) |existing| {
@@ -32,7 +32,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
                 }
             }
 
-            const file = try base_dir.createFile(io, Components.Entity.module_name, .{});
+            const file = try base_dir.createFile(io, Components.Entity.module_name, .{.read = true});
             errdefer file.close(io);
 
             const storage = try allocator.create(Storage);
@@ -79,10 +79,11 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             zone_key: zone_storage.ZoneKey,
             bytes: []const u8,
         ) !void {
+
             var zone = storage.global_zone.getZone(zone_key);
             assert(bytes.len <= zone.max_size - zone.position);
-
-            try storage.file.writePositionalAll(io, bytes, zone.position);
+            printObj("write", .{zone_key, zone, zone.offset + zone.position});
+            try storage.file.writePositionalAll(io, bytes, zone.offset + zone.position);
 
             zone.position += bytes.len;
         }
@@ -93,10 +94,15 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             zone_key: zone_storage.ZoneKey,
             offset: usize,
             buffer: []u8,
-        ) !void {
+        ) usize {
             const zone = storage.global_zone.getZone(zone_key);
-
-            try storage.file.readPositionalAll(io, buffer, zone.offset + offset);
+            
+            // TODO: P5 STORAGE_ERROR_HANDLERS
+            // Handle errors (log, etc)
+            return storage.file.readPositionalAll(io, buffer, zone.offset + offset) catch |err| {
+                printObj("Error readFromZone", err);
+                return 0;
+            };
         }
     };
 }

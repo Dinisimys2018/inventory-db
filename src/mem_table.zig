@@ -46,14 +46,11 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
         }
 
         /// return unique next time_label
-        pub fn insert(mem_table: *MemTable, init_time_label: u64, entities: []*Components.Entity) u64 {
-            var time_label = init_time_label;
+        pub fn insert(mem_table: *MemTable, entities: []*Components.Entity, batch_time_label: u64) void {
             for (entities) |entity| {
-                entity.time_label = time_label;
+                entity.time_label = batch_time_label;
                 mem_table.entities.appendAssumeCapacity(entity.*);
-                time_label += 1;
             }
-            return time_label;
         }
 
         pub fn lookupByOrderId(mem_table: *MemTable, key_value: Components.Entity.OrderId) !lookup.LookupResult {
@@ -143,7 +140,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             return table_pool.indexes[table_ptr];
         }
 
-        pub fn insert(table_pool: *MemTablePool, io: std.Io, entities: []*Components.Entity) !usize {
+        pub fn insert(table_pool: *MemTablePool, entities: []*Components.Entity, batch_time_label: u64) !usize {
             // TODO: Temporary solution, lock insert in flushing proccess,
             // but not need lock active table for concurrency inserting
             assert(table_pool.state == .finished_flush or table_pool.state == .empty);
@@ -154,7 +151,6 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             var entries_start: usize = 0;
             var entries_end: usize = 0;
             //TODO: P5 maybe move syscall for generate time_label to high level
-            var next_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
 
             var attempts: usize = 0;
 
@@ -172,7 +168,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                 }
 
                 const to_insert = entities[entries_start..entries_end];
-                next_time_label = table_pool.active_table.insert(next_time_label, to_insert);
+                table_pool.active_table.insert(to_insert, batch_time_label);
                 table_pool.sortActive();
 
                 table_pool.active_index.rewriteMin(&table_pool.active_table.entities.get(table_pool.active_table.entities.len - 1));

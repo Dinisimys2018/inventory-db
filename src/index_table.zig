@@ -12,8 +12,8 @@ pub fn IndexTableWithTwoKeysType(
     return struct {
         const IndexTable = @This();
         // re-export
-        pub const FirstKey = @FieldType(Entity, name_first_key);
-        pub const SecondKey = @FieldType(Entity, name_second_key);
+        pub const FirstKey = @FieldType(Entity, _name_first_key);
+        pub const SecondKey = @FieldType(Entity, _name_second_key);
         pub const name_first_key = _name_first_key;
         pub const name_second_key = _name_second_key;
 

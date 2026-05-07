@@ -53,6 +53,7 @@ pub const ConfigModule = struct {
             pub const level_0_table_size = mem_table_size;
             pub const level_0_index_size = mem_index_size;
             
+            pub const level_0_headers_size: usize = @sizeOf(Level_0_PoolStorageTables.HeadersStorageLevel);
             pub const level_0_indexes_size: usize = level_0_index_size * config.level_0_tables_count;
             pub const level_0_tables_size: usize = level_0_table_size * config.level_0_tables_count;
         };
@@ -78,7 +79,9 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             var global_zone_storage: *Components.GlobalZoneStorage = try .init(allocator, 0);
             errdefer global_zone_storage.deinit(allocator);
 
-            try global_zone_storage.initZone(allocator, .headers_level_0, Components.level_0_many_headers_size);
+            printObj("level_0_headers_size", Components.level_0_headers_size);
+
+            try global_zone_storage.initZone(allocator, .headers_level_0, Components.level_0_headers_size);
             try global_zone_storage.initZone(allocator, .indexes_level_0, Components.level_0_indexes_size);
             try global_zone_storage.initZone(allocator, .tables_level_0, Components.level_0_tables_size);
             
@@ -100,6 +103,10 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.storage = storage_module;
             module.level_0_pool_storage_tables = try .init(allocator, module);
             module.lookup = try .init(allocator, module, config.limit_lookup_results);
+            
+            // TODO: P2 REBUILD
+            // Resolve conflict between different configs (storage vs comptime)
+            try module.storage.writeToZone(io, .headers_level_0, &module.level_0_pool_storage_tables.headers_encoded);
 
             return module;
         }
@@ -112,20 +119,19 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.pool_mem_tables.deinit(allocator);
 
             module.level_0_pool_storage_tables.deinit(allocator);
-            
-            module.storage_table_headers.deinit(allocator);
-            module.storage_table_headers_encoded = undefined;
 
             allocator.destroy(module);
         }
 
-        pub fn insertToMemTables(module: *Module, io: std.Io, entities: []*Components.Entity) !usize {
+        pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !usize {
             var inserted_total: usize = 0;
             var inserted: usize = 0;
             var end: usize = Components.mem_tables_entites_max_count_per_insert;
             var attempts: usize = 0;
-
+            var batch_time_label: u64 = undefined;
             while (inserted_total < entities.len) {
+                batch_time_label = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
+
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
@@ -134,7 +140,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                     end = entities.len;
                 }
 
-                inserted = try module.pool_mem_tables.insert(io, entities[inserted_total..end]);
+                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end],batch_time_label,);
                 //TODO: P3 Flush tables on storage - VERY SLOW operation
                 // So, we need to reseach how can return response on client request
                 // without awating for flushing.
@@ -151,19 +157,19 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             return inserted;
         }
 
-        pub fn flushAllFilledMemTables(module: *Module, io: std.Io) !void {
+        pub fn flushAllFilledMemTables(module: *Module, io: Io) !void {
             var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_table_ptr;
 
             while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
-                try module.storage.writeToZone(io, .headers_level_0, &module.storage_table_headers_encoded);
                 const index = module.pool_mem_tables.getIndex(table_ptr);
                 const index_bytes = std.mem.asBytes(index);
 
                 try module.storage.writeToZone(io, .indexes_level_0, index_bytes);
 
                 inline for (Components.Entity.map_fields_meta.values) |field| {
-                    const field_items_bytes = std.mem.asBytes(&module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
-                    try module.storage.writeToZone(io, .tables_level_0, field_items_bytes);
+                    const field_items_bytes = std.mem.sliceAsBytes(module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
+
+                    try module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]);
                 }
 
                 module.level_0_pool_storage_tables.appendTable(index);
@@ -173,8 +179,8 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.pool_mem_tables.swapActiveTable();
         }
 
-        pub fn lookupByOrderId(module: *Module, value: Components.Entity.OrderId) []const Components.Entity {
-            return module.lookup.lookupByFirstKey(value);
+        pub fn lookupByOrderId(module: *Module, io: Io, value: Components.Entity.OrderId) []const Components.Entity {
+            return module.lookup.lookupByFirstKey(io, value);
         }
     };
 }
@@ -294,10 +300,10 @@ test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" 
 
     const config_module: ConfigModule = .{
         .entity = .order_item,
-        .mem_tables_max_count = 5,
+        .mem_tables_max_count = 4,
         .mem_table_filled_limit = 2,
-        .mem_tables_entities_max_count = 5,
-        .level_0_tables_count = 5 * 20,
+        .mem_tables_entities_max_count = 4,
+        .level_0_tables_count = 4 * 20,
     };
 
     var module: *ModuleType(config_module) = try .init(
@@ -331,15 +337,16 @@ test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" 
 test "Module insert only to memory and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    const tmp_dir = testing.tmpDir(.{});
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
 
     const config_module: ConfigModule = .{
         .entity = .order_item,
-        .mem_tables_max_count = 3,
+        .mem_tables_max_count = 4,
         .mem_table_filled_limit = 1,
-        .mem_tables_entities_max_count = 5,
-        .level_0_tables_count = 5 * 2,
-        .limit_lookup_results = 3,
+        .mem_tables_entities_max_count = 4,
+        .level_0_tables_count = 4 * 2,
+        .limit_lookup_results = 200,
     };
 
     var module: *ModuleType(&config_module) = try .init(
@@ -395,9 +402,11 @@ test "Module insert only to memory and lookup" {
     _ = try module.insertToMemTables(io, input_entities);
     _ = try module.insertToMemTables(io, input_entities);
 
-    const lookup_result = module.lookupByOrderId(2200);
+    const lookup_result = module.lookupByOrderId(io, 2200);
+    for(lookup_result) |ent| {
+    printObj("OrderItem", ent);
 
-    printObj("lookup_result", lookup_result);
+    }
 
     // try testing.expectEqual(2, lookup_result.len);
     // try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);

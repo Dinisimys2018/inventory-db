@@ -1,6 +1,9 @@
 const std = @import("std");
 const Allocator = std.mem.Allocator;
+const Io = std.Io;
 const assert = std.debug.assert;
+
+const printObj = @import("utils/debug.zig").printObj;
 
 const stdx_sort = @import("sort.zig");
 
@@ -21,6 +24,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
     return struct {
         const Lookup = @This();
+        const FirstKey = Components.IndexTable.FirstKey;
 
         // FIELDS
         module: *Components.Module,
@@ -58,15 +62,16 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
         pub fn lookupByFirstKey(
             lookup: *Lookup,
+            io: Io,
             key_value: Components.IndexTable.FirstKey,
         ) []const Components.Entity {
             var limit = lookup.limit;
             var count: usize = 0;
-            // count = lookup.lookupByFirstKeyInMemory(key_value, limit);
+            count = lookup.lookupByFirstKeyInMemory(key_value, limit);
 
             if (count < limit) {
                 limit -= count;
-                count += lookup.lookupByFirstKeyInLevel0(key_value, limit);
+                count += lookup.lookupByFirstKeyInLevel0(io, key_value, limit);
             }
 
             return lookup.readResults();
@@ -103,7 +108,9 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
                     count += entities_range[1];
                     if (count > limit) {
-                        entities_range[1] = entities_range[1] - limit - count;
+                        printObj("lookupByFirstKeyInMemory", .{.limit = limit, .count = count, .end_range = entities_range[1]});
+                        entities_range[1] = entities_range[1] - (count - limit);
+                        break;
                     }
 
                     lookup.mem_lookup_result.appendAssumeCapacity(.{
@@ -118,6 +125,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
         pub fn lookupByFirstKeyInLevel0(
             lookup: *Lookup,
+            io: Io,
             key_value: Components.IndexTable.FirstKey,
             limit: usize,
         ) usize {
@@ -126,22 +134,30 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
             //TODO: P3 need to check how we can clear result not before each lookup, but after this
             lookup.level_0_lookup_result.clearRetainingCapacity();
 
+            var buffer_first_keys: [4]u8 = undefined;
+
             var table_ptr: usize = 0;
-            var table: *Components.StorageTable = undefined;
             var index: *Components.IndexTable = undefined;
             // var count: usize = 0;
             _ = limit;
-
             while (table_ptr < lookup.module.level_0_pool_storage_tables.actual_count_tables) : (table_ptr += 1) {
-                table = lookup.module.level_0_pool_storage_tables.tables[table_ptr];
                 index = lookup.module.level_0_pool_storage_tables.indexes[table_ptr];
 
                 if (index.inFirstKeyInterval(key_value)) {
-                    
-                    lookup.level_0_lookup_result.appendAssumeCapacity(.{
-                        .table_ptr = table_ptr,
-                        .entities_range = .{1, 1},
-                    });
+                    const field_values = lookup.module.level_0_pool_storage_tables.readFieldSector(
+                        io,
+                        table_ptr,
+                        .order_id,
+                        &buffer_first_keys,
+                    );
+
+                    const u32_slice = std.mem.bytesAsSlice(u32, buffer_first_keys[0..field_values]);
+
+                    printObj("buffer_first_keys", u32_slice);
+                    // lookup.level_0_lookup_result.appendAssumeCapacity(.{
+                    //     .table_ptr = table_ptr,
+                    //     .entities_range = .{1, 1},
+                    // });
                 }
             }
 
