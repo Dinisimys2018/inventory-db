@@ -78,8 +78,6 @@ pub const OrderItem = struct {
         },
     });
 
-    pub const values_map_fields_meta: [4]FieldMeta = map_fields_meta.values();
-
     pub const IndexTable = index_table.IndexTableWithTwoKeysType(
         OrderItem,
         "order_id",

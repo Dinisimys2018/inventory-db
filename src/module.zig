@@ -12,6 +12,7 @@ pub const zones_storage = @import("zone_storage.zig");
 pub const reader_mem_tables = @import("reader_mem_table.zig");
 pub const storage_table = @import("storage_table.zig");
 pub const lookup = @import("lookup.zig");
+pub const m_entities = @import("entities.zig");
 
 const OrderItem = @import("order_item_entity.zig").OrderItem;
 
@@ -34,7 +35,7 @@ pub const ConfigModule = struct {
             pub const Entity = switch (config.entity) {
                 .order_item => OrderItem,
             };
-            
+
             pub const Module = ModuleType(config);
             pub const IndexTable = Entity.IndexTable;
             pub const MemTable = mem_tables.MemTableType(config);
@@ -46,13 +47,14 @@ pub const ConfigModule = struct {
 
             // CONSTANTS
             pub const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
-            pub const entity_size = @sizeOf(Entity);
+            pub const entity_size = m_entities.sizeOf(Entity);
+
             pub const mem_index_size = @sizeOf(IndexTable);
             pub const mem_table_size = entity_size * config.mem_tables_entities_max_count;
 
             pub const level_0_table_size = mem_table_size;
             pub const level_0_index_size = mem_index_size;
-            
+
             pub const level_0_headers_size: usize = @sizeOf(Level_0_PoolStorageTables.HeadersStorageLevel);
             pub const level_0_indexes_size: usize = level_0_index_size * config.level_0_tables_count;
             pub const level_0_tables_size: usize = level_0_table_size * config.level_0_tables_count;
@@ -67,7 +69,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         const Module = @This();
 
         // FIELDS
-        config: *const ConfigModule = config,
         map_fields_meta: *Components.Entity.MapMetaFields,
         prev_insert_batch_time_label: u64,
         prev_insert_batch_offset: mem_tables.BatchOffset,
@@ -85,7 +86,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             try global_zone_storage.initZone(allocator, .headers_level_0, Components.level_0_headers_size);
             try global_zone_storage.initZone(allocator, .indexes_level_0, Components.level_0_indexes_size);
             try global_zone_storage.initZone(allocator, .tables_level_0, Components.level_0_tables_size);
-            
+
             const storage_module: *Components.Storage = try .init(
                 allocator,
                 io,
@@ -114,7 +115,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn deinit(module: *Module, allocator: std.mem.Allocator, io: std.Io) void {
-    
             allocator.destroy(module.map_fields_meta);
             module.storage.deinit(allocator, io);
             module.lookup.deinit(allocator);
@@ -125,30 +125,29 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             allocator.destroy(module);
         }
 
-        pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !usize {
-            var inserted_total: usize = 0;
+        pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !u16 {
+            var inserted_total: u16 = 0;
             var inserted: u16 = 0;
-            var end: usize = Components.mem_tables_entites_max_count_per_insert;
-            var attempts: usize = 0;
-            var batch_time_label: u64 = undefined;
+            var end: u16 = Components.mem_tables_entites_max_count_per_insert;
+            var attempts: u8 = 0;
             var batch_offset: mem_tables.BatchOffset = 1;
-
+            const batch_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
+            if (batch_time_label == module.prev_insert_batch_time_label) {
+                batch_offset = module.prev_insert_batch_offset;
+            } else {
+                module.prev_insert_batch_time_label = batch_time_label;
+            }
             while (inserted_total < entities.len) {
-                batch_time_label = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
-                if (batch_time_label == module.prev_insert_batch_time_label) {
-                    batch_offset = module.prev_insert_batch_offset;
-                } else {
-                    module.prev_insert_batch_time_label = batch_time_label;
-                }
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
 
                 if (end > entities.len) {
-                    end = entities.len;
+                    end = @intCast(entities.len);
                 }
 
-                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end],batch_time_label, batch_offset);
+                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end], batch_time_label, batch_offset);
+               
                 //TODO: P3 FLUSH_MEM_TABLES
                 // Flush tables on storage - VERY SLOW operation
                 // So, we need to reseach how can return response on client request
@@ -169,6 +168,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: Io) !void {
+            printObj("flushAllFilledMemTables", .{});
             var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_table_ptr;
 
             while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
@@ -179,7 +179,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
                 inline for (Components.Entity.map_fields_meta.values) |field| {
                     const field_items_bytes = std.mem.sliceAsBytes(module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
-
                     try module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]);
                 }
 
@@ -377,7 +376,6 @@ test "Module insert only to memory and lookup" {
     }
 
     input_entities[0].* = .{
-
         .batch_offset = 0,
         .time_label = 0,
         .order_id = 1100,
@@ -386,7 +384,7 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[1].* = .{
-                .batch_offset = 0,
+        .batch_offset = 0,
 
         .time_label = 0,
         .order_id = 2200,
@@ -395,7 +393,7 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[2].* = .{
-                .batch_offset = 0,
+        .batch_offset = 0,
 
         .time_label = 0,
         .order_id = 3300,
@@ -404,7 +402,7 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[3].* = .{
-                .batch_offset = 0,
+        .batch_offset = 0,
 
         .time_label = 0,
         .order_id = 2200,
@@ -420,11 +418,12 @@ test "Module insert only to memory and lookup" {
     _ = try module.insertToMemTables(io, input_entities);
     _ = try module.insertToMemTables(io, input_entities);
     _ = try module.insertToMemTables(io, input_entities);
+    _ = try module.insertToMemTables(io, input_entities);
+
 
     const lookup_result = module.lookupByOrderId(io, 2200);
-    for(lookup_result) |ent| {
-    printObj("OrderItem", ent);
-
+    for (lookup_result) |ent| {
+        printObj("OrderItem", ent);
     }
 
     // try testing.expectEqual(2, lookup_result.len);

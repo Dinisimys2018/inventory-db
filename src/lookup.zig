@@ -104,23 +104,29 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                         stdx_sort.compareNumberKeys(Components.IndexTable.FirstKey),
                     );
 
+
                     if (entities_range[1] == 0) return count;
 
-                    count += entities_range[1];
+                    count += entities_range[1] - entities_range[0];
+                    
                     if (count > limit) {
-                        printObj("lookupByFirstKeyInMemory", .{.limit = limit, .count = count, .end_range = entities_range[1]});
                         entities_range[1] = entities_range[1] - (count - limit);
-                        break;
                     }
+                    
+                    count += entities_range[1];
 
                     lookup.mem_lookup_result.appendAssumeCapacity(.{
                         .table_ptr = table_ptr,
                         .entities_range = entities_range,
                     });
+
+                    if (count == limit) {
+                        return count;
+                    }
                 }
             }
 
-            return lookup.mem_lookup_result.items.len;
+            return count;
         }
 
         pub fn lookupByFirstKeyInLevel0(
@@ -134,34 +140,53 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
             //TODO: P3 need to check how we can clear result not before each lookup, but after this
             lookup.level_0_lookup_result.clearRetainingCapacity();
 
-            var buffer_first_keys: [4]u8 = undefined;
+            var buffer_first_keys: [16]u8 align(@alignOf(Components.IndexTable.FirstKey))  = undefined;
 
             var table_ptr: usize = 0;
             var index: *Components.IndexTable = undefined;
-            // var count: usize = 0;
-            _ = limit;
+            var count: usize = 0;
+
             while (table_ptr < lookup.module.level_0_pool_storage_tables.actual_count_tables) : (table_ptr += 1) {
                 index = lookup.module.level_0_pool_storage_tables.indexes[table_ptr];
-
                 if (index.inFirstKeyInterval(key_value)) {
-                    const field_values = lookup.module.level_0_pool_storage_tables.readFieldSector(
+                    const keys_count = lookup.module.level_0_pool_storage_tables.readFieldSector(
                         io,
                         table_ptr,
                         .order_id,
                         &buffer_first_keys,
                     );
 
-                    const u32_slice = std.mem.bytesAsSlice(u32, buffer_first_keys[0..field_values]);
+                    const first_keys_slice = std.mem.bytesAsSlice(Components.IndexTable.FirstKey, buffer_first_keys[0..keys_count]);
 
-                    printObj("buffer_first_keys", u32_slice);
-                    // lookup.level_0_lookup_result.appendAssumeCapacity(.{
-                    //     .table_ptr = table_ptr,
-                    //     .entities_range = .{1, 1},
-                    // });
+                    var entities_range = stdx_sort.equalRangeDesc(
+                        Components.Entity.OrderId,
+                        first_keys_slice,
+                        key_value,
+                        stdx_sort.compareNumberKeys(Components.IndexTable.FirstKey),
+                    );
+                    printObj("first_keys_slice", first_keys_slice);
+                    printObj("entities_range", entities_range);
+                    if (entities_range[1] == 0) return count;
+                    
+                    if (count > limit) {
+                        entities_range[1] = entities_range[1] - (count - limit);
+                    }
+
+                    count += entities_range[1];
+
+
+                    lookup.level_0_lookup_result.appendAssumeCapacity(.{
+                        .table_ptr = table_ptr,
+                        .entities_range = entities_range,
+                    });
+
+                    if (count == limit) {
+                        return count;
+                    }
                 }
             }
 
-            return lookup.level_0_lookup_result.items.len;
+            return count;
         }
 
         pub fn readResults(
@@ -174,5 +199,6 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
 
             return lookup.buffer_entities[0..count];
         }
+
     };
 }

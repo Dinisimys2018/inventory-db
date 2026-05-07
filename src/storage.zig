@@ -82,7 +82,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
 
             var zone = storage.global_zone.getZone(zone_key);
             assert(bytes.len <= zone.max_size - zone.position);
-            printObj("write", .{zone_key, zone, zone.offset + zone.position});
+    
             try storage.file.writePositionalAll(io, bytes, zone.offset + zone.position);
 
             zone.position += bytes.len;
@@ -96,7 +96,6 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             buffer: []u8,
         ) usize {
             const zone = storage.global_zone.getZone(zone_key);
-            
             // TODO: P5 STORAGE_ERROR_HANDLERS
             // Handle errors (log, etc)
             return storage.file.readPositionalAll(io, buffer, zone.offset + offset) catch |err| {

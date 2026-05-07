@@ -9,8 +9,10 @@ const ArrayList = std.ArrayList;
 const assert = std.debug.assert;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
+
 const printObj = @import("utils/debug.zig").printObj;
 const stdx_sort = @import("sort.zig");
+
 const index_table = @import("index_table.zig");
 const module = @import("module.zig");
 const lookup = @import("lookup.zig");
