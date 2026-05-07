@@ -17,6 +17,7 @@ const lookup = @import("lookup.zig");
 
 pub const MemTablePtr = usize;
 pub const MemEntryPtr = usize;
+pub const BatchOffset = u16;
 
 pub fn MemTableType(comptime config: *const module.ConfigModule) type {
     const Components = config.Components();
@@ -46,11 +47,16 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
         }
 
         /// return unique next time_label
-        pub fn insert(mem_table: *MemTable, entities: []*Components.Entity, batch_time_label: u64) void {
+        pub fn insert(mem_table: *MemTable, entities: []*Components.Entity, batch_time_label: u64, init_batch_offset: BatchOffset,) BatchOffset {
+            var batch_offset = init_batch_offset;
             for (entities) |entity| {
                 entity.time_label = batch_time_label;
+                entity.batch_offset = batch_offset;
+                batch_offset += 1;
                 mem_table.entities.appendAssumeCapacity(entity.*);
             }
+
+            return batch_offset;
         }
 
         pub fn lookupByOrderId(mem_table: *MemTable, key_value: Components.Entity.OrderId) !lookup.LookupResult {
@@ -140,7 +146,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             return table_pool.indexes[table_ptr];
         }
 
-        pub fn insert(table_pool: *MemTablePool, entities: []*Components.Entity, batch_time_label: u64) !usize {
+        pub fn insert(table_pool: *MemTablePool, entities: []*Components.Entity, batch_time_label: u64, init_batch_offset: BatchOffset) !u16 {
             // TODO: Temporary solution, lock insert in flushing proccess,
             // but not need lock active table for concurrency inserting
             assert(table_pool.state == .finished_flush or table_pool.state == .empty);
@@ -148,8 +154,9 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                 return 0;
             }
             table_pool.sorted_active = false;
-            var entries_start: usize = 0;
-            var entries_end: usize = 0;
+            var entries_start: u16 = 0;
+            var entries_end: u16 = 0;
+            var batch_offset: BatchOffset = init_batch_offset;
             //TODO: P5 maybe move syscall for generate time_label to high level
 
             var attempts: usize = 0;
@@ -160,15 +167,20 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                 assert(attempts < 50);
 
                 // Получаем количество, которое мы можем вставить в активную таблицу
-                const rest = table_pool.active_table.entities.capacity - table_pool.active_table.entities.len;
+                const rest: u16 = @intCast(table_pool.active_table.entities.capacity - table_pool.active_table.entities.len);
                 entries_end += rest;
 
                 if (entries_end >= entities.len) {
-                    entries_end = entities.len;
+                    entries_end = @intCast(entities.len);
                 }
 
                 const to_insert = entities[entries_start..entries_end];
-                table_pool.active_table.insert(to_insert, batch_time_label);
+
+                batch_offset = table_pool.active_table.insert(
+                    to_insert,
+                    batch_time_label,
+                    batch_offset,
+                );
                 table_pool.sortActive();
 
                 table_pool.active_index.rewriteMin(&table_pool.active_table.entities.get(table_pool.active_table.entities.len - 1));

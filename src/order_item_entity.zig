@@ -5,6 +5,7 @@ const printObj = @import("utils/debug.zig").printObj;
 
 const index_table = @import("index_table.zig");
 const lookup = @import("lookup.zig");
+const mem_table = @import("mem_table.zig");
 
 pub const OrderItem = struct {
     pub const module_name = "order_items";
@@ -16,6 +17,7 @@ pub const OrderItem = struct {
 
     // FIELDS
     time_label: TimeLabel,
+    batch_offset: mem_table.BatchOffset,
     order_id: OrderId,
     product_id: ProductId,
     quantity: Quantity, //100_00 = 100.01
@@ -31,6 +33,8 @@ pub const OrderItem = struct {
             if (a.order_id != b.order_id) return a.order_id > b.order_id;
 
             if (a.product_id != b.product_id) return a.product_id > b.product_id;
+
+            if (a.time_label == b.time_label) return a.batch_offset > b.batch_offset;
 
             return a.time_label > b.time_label;
         }

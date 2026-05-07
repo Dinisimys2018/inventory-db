@@ -21,10 +21,10 @@ pub const EntityEnum = enum {
 
 pub const ConfigModule = struct {
     entity: EntityEnum,
-    mem_tables_max_count: mem_tables.MemTablePtr,
-    mem_table_filled_limit: mem_tables.MemTablePtr,
-    mem_tables_entities_max_count: mem_tables.MemEntryPtr,
-    level_0_tables_count: u32,
+    mem_tables_max_count: u16,
+    mem_table_filled_limit: u16,
+    mem_tables_entities_max_count: u16,
+    level_0_tables_count: u16,
     limit_lookup_results: u8,
 
     pub fn Components(config: *const ConfigModule) type {
@@ -69,7 +69,8 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         // FIELDS
         config: *const ConfigModule = config,
         map_fields_meta: *Components.Entity.MapMetaFields,
-        time_label: u64,
+        prev_insert_batch_time_label: u64,
+        prev_insert_batch_offset: mem_tables.BatchOffset,
         storage: *Components.Storage,
         pool_mem_tables: *Components.MemTablesPool,
         lookup: *Components.Lookup,
@@ -103,7 +104,8 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.storage = storage_module;
             module.level_0_pool_storage_tables = try .init(allocator, module);
             module.lookup = try .init(allocator, module, config.limit_lookup_results);
-            
+            module.prev_insert_batch_offset = 0;
+            module.prev_insert_batch_time_label = 0;
             // TODO: P2 REBUILD
             // Resolve conflict between different configs (storage vs comptime)
             try module.storage.writeToZone(io, .headers_level_0, &module.level_0_pool_storage_tables.headers_encoded);
@@ -125,13 +127,19 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
         pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !usize {
             var inserted_total: usize = 0;
-            var inserted: usize = 0;
+            var inserted: u16 = 0;
             var end: usize = Components.mem_tables_entites_max_count_per_insert;
             var attempts: usize = 0;
             var batch_time_label: u64 = undefined;
+            var batch_offset: mem_tables.BatchOffset = 1;
+
             while (inserted_total < entities.len) {
                 batch_time_label = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
-
+                if (batch_time_label == module.prev_insert_batch_time_label) {
+                    batch_offset = module.prev_insert_batch_offset;
+                } else {
+                    module.prev_insert_batch_time_label = batch_time_label;
+                }
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
@@ -140,8 +148,9 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                     end = entities.len;
                 }
 
-                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end],batch_time_label,);
-                //TODO: P3 Flush tables on storage - VERY SLOW operation
+                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end],batch_time_label, batch_offset);
+                //TODO: P3 FLUSH_MEM_TABLES
+                // Flush tables on storage - VERY SLOW operation
                 // So, we need to reseach how can return response on client request
                 // without awating for flushing.
                 // For example: we can calculate total rest of entities for tables pool and insert only
@@ -149,10 +158,12 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                 if (inserted == 0) {
                     try module.flushAllFilledMemTables(io);
                 }
-
+                batch_offset += inserted;
                 inserted_total += inserted;
                 end += inserted;
             }
+
+            module.prev_insert_batch_offset = batch_offset;
 
             return inserted;
         }
@@ -366,6 +377,8 @@ test "Module insert only to memory and lookup" {
     }
 
     input_entities[0].* = .{
+
+        .batch_offset = 0,
         .time_label = 0,
         .order_id = 1100,
         .product_id = 110,
@@ -373,6 +386,8 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[1].* = .{
+                .batch_offset = 0,
+
         .time_label = 0,
         .order_id = 2200,
         .product_id = 220,
@@ -380,6 +395,8 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[2].* = .{
+                .batch_offset = 0,
+
         .time_label = 0,
         .order_id = 3300,
         .product_id = 330,
@@ -387,6 +404,8 @@ test "Module insert only to memory and lookup" {
     };
 
     input_entities[3].* = .{
+                .batch_offset = 0,
+
         .time_label = 0,
         .order_id = 2200,
         .product_id = 440,
