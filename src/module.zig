@@ -131,23 +131,31 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             var end: u16 = Components.mem_tables_entites_max_count_per_insert;
             var attempts: u8 = 0;
             var batch_offset: mem_tables.BatchOffset = 1;
-            const batch_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
-            if (batch_time_label == module.prev_insert_batch_time_label) {
-                batch_offset = module.prev_insert_batch_offset;
-            } else {
-                module.prev_insert_batch_time_label = batch_time_label;
-            }
+
+      
             while (inserted_total < entities.len) {
+                
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
+
+               //TODO: P3 flushAllFilledMemTables
+               // If move io operation flushAllFilledMemTables(it do some delay between inserts) out of this function
+               // then we can move generation batch_time_label out of loop
+                const batch_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
+
+                  if (batch_time_label == module.prev_insert_batch_time_label) {
+                batch_offset = module.prev_insert_batch_offset;
+                 } else {
+                module.prev_insert_batch_time_label = batch_time_label;
+                }
 
                 if (end > entities.len) {
                     end = @intCast(entities.len);
                 }
 
                 inserted = try module.pool_mem_tables.insert(entities[inserted_total..end], batch_time_label, batch_offset);
-               
+
                 //TODO: P3 FLUSH_MEM_TABLES
                 // Flush tables on storage - VERY SLOW operation
                 // So, we need to reseach how can return response on client request
@@ -168,22 +176,29 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn flushAllFilledMemTables(module: *Module, io: Io) !void {
-            printObj("flushAllFilledMemTables", .{});
-            var table_ptr: mem_tables.MemTablePtr = module.pool_mem_tables.active_table_ptr;
 
-            while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
-                const index = module.pool_mem_tables.getIndex(table_ptr);
-                const index_bytes = std.mem.asBytes(index);
+            var table_ptr: mem_tables.MemTablePtr = 0;
 
-                try module.storage.writeToZone(io, .indexes_level_0, index_bytes);
+            inline for (Components.Entity.map_fields_meta.values) |field| {
+                table_ptr = module.pool_mem_tables.active_table_ptr;
 
-                inline for (Components.Entity.map_fields_meta.values) |field| {
+                while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
                     const field_items_bytes = std.mem.sliceAsBytes(module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
                     try module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]);
                 }
+            }
 
-                module.level_0_pool_storage_tables.appendTable(index);
-                module.pool_mem_tables.clearTable(table_ptr);
+            
+            table_ptr = module.pool_mem_tables.active_table_ptr;
+
+            while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
+                    const index = module.pool_mem_tables.getIndex(table_ptr);
+                    const index_bytes = std.mem.asBytes(index);
+
+                    try module.storage.writeToZone(io, .indexes_level_0, index_bytes);
+
+                    module.level_0_pool_storage_tables.appendTable(index);
+                    module.pool_mem_tables.clearTable(table_ptr);
             }
 
             module.pool_mem_tables.swapActiveTable();
@@ -419,7 +434,6 @@ test "Module insert only to memory and lookup" {
     _ = try module.insertToMemTables(io, input_entities);
     _ = try module.insertToMemTables(io, input_entities);
     _ = try module.insertToMemTables(io, input_entities);
-
 
     const lookup_result = module.lookupByOrderId(io, 2200);
     for (lookup_result) |ent| {

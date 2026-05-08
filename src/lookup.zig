@@ -3,7 +3,7 @@ const Allocator = std.mem.Allocator;
 const Io = std.Io;
 const assert = std.debug.assert;
 
-const printObj = @import("utils/debug.zig").printObj;
+const print = @import("utils/debug.zig").ModulePrinterType(.lookup);
 
 const stdx_sort = @import("sort.zig");
 
@@ -140,7 +140,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
             //TODO: P3 need to check how we can clear result not before each lookup, but after this
             lookup.level_0_lookup_result.clearRetainingCapacity();
 
-            var buffer_first_keys: [16]u8 align(@alignOf(Components.IndexTable.FirstKey))  = undefined;
+            var buffer_first_keys: [config.mem_tables_entities_max_count * 4]u8 align(@alignOf(Components.IndexTable.FirstKey))  = undefined;
 
             var table_ptr: usize = 0;
             var index: *Components.IndexTable = undefined;
@@ -157,6 +157,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                     );
 
                     const first_keys_slice = std.mem.bytesAsSlice(Components.IndexTable.FirstKey, buffer_first_keys[0..keys_count]);
+                    print.obj("keys_count", keys_count);
 
                     var entities_range = stdx_sort.equalRangeDesc(
                         Components.Entity.OrderId,
@@ -164,16 +165,16 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                         key_value,
                         stdx_sort.compareNumberKeys(Components.IndexTable.FirstKey),
                     );
-                    printObj("first_keys_slice", first_keys_slice);
-                    printObj("entities_range", entities_range);
+            
                     if (entities_range[1] == 0) return count;
+
+                    count += entities_range[1] - entities_range[0];
                     
                     if (count > limit) {
                         entities_range[1] = entities_range[1] - (count - limit);
                     }
-
+                    
                     count += entities_range[1];
-
 
                     lookup.level_0_lookup_result.appendAssumeCapacity(.{
                         .table_ptr = table_ptr,
@@ -197,6 +198,7 @@ pub fn LookupWithTwoKeysType(comptime config: *const m_module.ConfigModule) type
                 lookup.buffer_entities,
             );
 
+            print.obj("level0 results", lookup.level_0_lookup_result);
             return lookup.buffer_entities[0..count];
         }
 

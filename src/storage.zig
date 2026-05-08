@@ -5,7 +5,7 @@ const Io = std.Io;
 const Writer = std.Io.Writer;
 const Error = Writer.FileError;
 
-const printObj = @import("utils/debug.zig").printObj;
+const print = @import("utils/debug.zig").ModulePrinterType(.storage);
 pub const zone_storage = @import("zone_storage.zig");
 pub const module = @import("module.zig");
 
@@ -81,6 +81,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
         ) !void {
 
             var zone = storage.global_zone.getZone(zone_key);
+            print.obj("write to zone", .{.key = zone_key, .zone = zone});
             assert(bytes.len <= zone.max_size - zone.position);
     
             try storage.file.writePositionalAll(io, bytes, zone.offset + zone.position);
@@ -99,7 +100,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             // TODO: P5 STORAGE_ERROR_HANDLERS
             // Handle errors (log, etc)
             return storage.file.readPositionalAll(io, buffer, zone.offset + offset) catch |err| {
-                printObj("Error readFromZone", err);
+                print.obj("Error readFromZone", err);
                 return 0;
             };
         }

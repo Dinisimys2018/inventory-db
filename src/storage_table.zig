@@ -16,11 +16,6 @@ pub fn HeadersStorageLevelType(comptime config: *const m_module.ConfigModule, le
         else => unreachable,
     };
 
-    const actual_table_size = switch (level) {
-        0 => Components.level_0_table_size,
-        else => unreachable,
-    };
-
     const actual_tables_count = switch (level) {
         0 => config.level_0_tables_count,
         else => unreachable,
@@ -41,7 +36,6 @@ pub fn HeadersStorageLevelType(comptime config: *const m_module.ConfigModule, le
 
         // FIELDS
         index_size: usize,
-        table_size: usize,
         tables_count: usize,
         entities_count: usize,
         map_fields: std.EnumMap(Components.Entity.Field, FieldMeta),
@@ -52,7 +46,6 @@ pub fn HeadersStorageLevelType(comptime config: *const m_module.ConfigModule, le
             // Research how we can restore headers and resolve conflicts of configs
             headers.* = .{
                 .index_size = actual_index_size,
-                .table_size = actual_table_size,
                 .tables_count = actual_tables_count,
                 .entities_count = actual_entities_count,
                 .map_fields = undefined,
@@ -62,7 +55,7 @@ pub fn HeadersStorageLevelType(comptime config: *const m_module.ConfigModule, le
             var field_items_size: usize = 0;
             var map_fields_meta_iterator = module.map_fields_meta.iterator();
             while (map_fields_meta_iterator.next()) |field_meta_kv| {
-                field_items_size = field_meta_kv.value.size * headers.entities_count;
+                field_items_size = field_meta_kv.value.size * headers.entities_count * headers.tables_count;
 
                 headers.map_fields.put(
                     field_meta_kv.key,
@@ -105,7 +98,7 @@ pub fn PoolStorageTablesType(
         pub fn init(allocator: Allocator, module: *Components.Module) !*PoolStorageTables {
             const pool_storage_tables = try allocator.create(PoolStorageTables);
             // TODO: P3 REBUILD
-                // loading from storage for working between diferrent configs
+            // loading from storage for working between diferrent configs
             pool_storage_tables.headers = try .init(allocator, module);
             pool_storage_tables.headers_encoded = std.mem.asBytes(pool_storage_tables.headers).*;
             pool_storage_tables.actual_count_tables = 0;
@@ -115,7 +108,7 @@ pub fn PoolStorageTablesType(
 
             for (0..pool_storage_tables.headers.tables_count) |table_ptr| {
                 pool_storage_tables.indexes[table_ptr] = try .init(allocator);
-                pool_storage_tables.table_offsets[table_ptr] = table_ptr * pool_storage_tables.headers.table_size;
+                pool_storage_tables.table_offsets[table_ptr] = table_ptr * pool_storage_tables.headers.entities_count;
             }
 
             return pool_storage_tables;
@@ -147,8 +140,7 @@ pub fn PoolStorageTablesType(
             field: Components.Entity.Field,
             buffer: []u8,
         ) usize {
-            const field_offset = pool_storage_tables.table_offsets[table_ptr] +
-                pool_storage_tables.headers.map_fields.getAssertContains(field).offset;
+            const field_offset = pool_storage_tables.headers.map_fields.getAssertContains(field).offset + pool_storage_tables.table_offsets[table_ptr];
                 
             return pool_storage_tables.module.storage.readFromZone(
                 io,
