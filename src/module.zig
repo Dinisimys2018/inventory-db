@@ -2,9 +2,9 @@ const std = @import("std");
 const testing = std.testing;
 const assert = std.debug.assert;
 const Io = std.Io;
+const Allocator = std.mem.Allocator;
 
-const printObj = @import("utils/debug.zig").printObj;
-
+const log = @import("utils/debug.zig").ModulePrinterType(.module);
 pub const mem_tables = @import("mem_table.zig");
 pub const index_table = @import("index_table.zig");
 pub const storage = @import("storage.zig");
@@ -13,6 +13,7 @@ pub const reader_mem_tables = @import("reader_mem_table.zig");
 pub const storage_table = @import("storage_table.zig");
 pub const lookup = @import("lookup.zig");
 pub const m_entities = @import("entities.zig");
+pub const m_sheduler = @import("scheduler.zig");
 
 const OrderItem = @import("order_item_entity.zig").OrderItem;
 
@@ -22,8 +23,8 @@ pub const EntityEnum = enum {
 
 pub const ConfigModule = struct {
     entity: EntityEnum,
-    mem_tables_max_count: u16,
-    mem_table_filled_limit: u16,
+    mem_tables_blocks_count: u8,
+    mem_tables_count_in_block: u16,
     mem_tables_entities_max_count: u16,
     level_0_tables_count: u16,
     limit_lookup_results: u8,
@@ -44,9 +45,9 @@ pub const ConfigModule = struct {
             pub const Storage = storage.StorageType(config);
             pub const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(config, 0);
             pub const Lookup = Entity.Lookup(config);
+            pub const Scheduler = m_sheduler.SchedulerType(config);
 
             // CONSTANTS
-            pub const mem_tables_entites_max_count_per_insert = config.mem_table_filled_limit * config.mem_tables_entities_max_count;
             pub const entity_size = m_entities.sizeOf(Entity);
 
             pub const mem_index_size = @sizeOf(IndexTable);
@@ -76,12 +77,11 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         pool_mem_tables: *Components.MemTablesPool,
         lookup: *Components.Lookup,
         level_0_pool_storage_tables: *Components.Level_0_PoolStorageTables,
+        scheduler: *Components.Scheduler,
 
-        pub fn init(allocator: std.mem.Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
+        pub fn init(allocator: Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *Components.GlobalZoneStorage = try .init(allocator, 0);
             errdefer global_zone_storage.deinit(allocator);
-
-            printObj("level_0_headers_size", Components.level_0_headers_size);
 
             try global_zone_storage.initZone(allocator, .headers_level_0, Components.level_0_headers_size);
             try global_zone_storage.initZone(allocator, .indexes_level_0, Components.level_0_indexes_size);
@@ -111,10 +111,23 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             // Resolve conflict between different configs (storage vs comptime)
             try module.storage.writeToZone(io, .headers_level_0, &module.level_0_pool_storage_tables.headers_encoded);
 
+            module.scheduler = try .init(allocator);
+
+            try module.scheduler.appendTask(
+                allocator,
+                Module.flushFilledMemBlocks,
+                .{ module, io },
+                .{
+                    .every_millisec = 5000,
+                },
+            );
+
             return module;
         }
 
-        pub fn deinit(module: *Module, allocator: std.mem.Allocator, io: std.Io) void {
+        pub fn deinit(module: *Module, allocator: Allocator, io: std.Io) void {
+            module.scheduler.deinit(allocator);
+
             allocator.destroy(module.map_fields_meta);
             module.storage.deinit(allocator, io);
             module.lookup.deinit(allocator);
@@ -128,46 +141,36 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !u16 {
             var inserted_total: u16 = 0;
             var inserted: u16 = 0;
-            var end: u16 = Components.mem_tables_entites_max_count_per_insert;
             var attempts: u8 = 0;
             var batch_offset: mem_tables.BatchOffset = 1;
 
-      
+            const batch_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
+
+            if (batch_time_label == module.prev_insert_batch_time_label) {
+                batch_offset = module.prev_insert_batch_offset;
+            } else {
+                module.prev_insert_batch_time_label = batch_time_label;
+            }
+
             while (inserted_total < entities.len) {
-                
                 attempts += 1;
                 //TODO: P5 need to research limit (maybe trigger real error in release mode)
                 assert(attempts < 20);
 
-               //TODO: P3 flushAllFilledMemTables
-               // If move io operation flushAllFilledMemTables(it do some delay between inserts) out of this function
-               // then we can move generation batch_time_label out of loop
-                const batch_time_label: u64 = @intCast(std.Io.Clock.awake.now(io).toMilliseconds());
-
-                  if (batch_time_label == module.prev_insert_batch_time_label) {
-                batch_offset = module.prev_insert_batch_offset;
-                 } else {
-                module.prev_insert_batch_time_label = batch_time_label;
+                if (module.pool_mem_tables.state != .ready_to_inserts) {
+                    io.sleep(std.Io.Duration.fromMilliseconds(1), .awake) catch {};
+                    continue;
                 }
 
-                if (end > entities.len) {
-                    end = @intCast(entities.len);
-                }
+                inserted = module.pool_mem_tables.insert(
+                    entities[inserted_total..],
+                    batch_time_label,
+                    batch_offset,
+                );
+                    log.obj("pool state after insert", module.pool_mem_tables.state);
 
-                inserted = try module.pool_mem_tables.insert(entities[inserted_total..end], batch_time_label, batch_offset);
-
-                //TODO: P3 FLUSH_MEM_TABLES
-                // Flush tables on storage - VERY SLOW operation
-                // So, we need to reseach how can return response on client request
-                // without awating for flushing.
-                // For example: we can calculate total rest of entities for tables pool and insert only
-                // slice via info about rest
-                if (inserted == 0) {
-                    try module.flushAllFilledMemTables(io);
-                }
                 batch_offset += inserted;
                 inserted_total += inserted;
-                end += inserted;
             }
 
             module.prev_insert_batch_offset = batch_offset;
@@ -175,33 +178,76 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             return inserted;
         }
 
-        pub fn flushAllFilledMemTables(module: *Module, io: Io) !void {
+        pub fn flushFilledMemBlocks(module: *Module, io: Io) Io.Cancelable!void {
+            log.obj("flushFilledMemBlocks",  module.pool_mem_tables.blocks[1]);
 
-            var table_ptr: mem_tables.MemTablePtr = 0;
+            const last_block_ptr = config.mem_tables_blocks_count - 1;
+            var block_ptr = module.pool_mem_tables.active_block_ptr;
+            var block: *mem_tables.Block = undefined;
+            var start_table_ptr: mem_tables.MemTablePtr = 0;
+            var end_table_ptr: mem_tables.MemTablePtr = 0;
+
+            var block_ptrs_buffer: [config.mem_tables_blocks_count]mem_tables.MemBlockPtr = undefined;
+            var block_ptrs_idx: mem_tables.MemBlockPtr = 0;
+
+            while (block_ptrs_idx < config.mem_tables_blocks_count) {
+                if (block_ptr == last_block_ptr) {
+                    block_ptr = 0;
+                }
+                block = module.pool_mem_tables.blocks[block_ptr];
+                                    log.obj("check block", block);
+
+                if (block.state == .filled) {
+
+                    block.state = .started_flush;
+                    if (block_ptrs_idx == 0) {
+                        start_table_ptr = block.start_ptr;
+                    }
+                    end_table_ptr = block.end_ptr;
+                    block_ptrs_buffer[block_ptrs_idx] = block_ptr;
+                    block_ptrs_idx += 1;
+                } else {
+                    break;
+                }
+                block_ptr += 1;
+            }
+            log.obj("block_ptrs_idx", block_ptrs_idx);
+
+            log.obj("block_ptrs_buffer", block_ptrs_buffer);
+            if (block_ptrs_idx == 0) return;
+
+            var table_ptr: mem_tables.MemTablePtr = undefined;
 
             inline for (Components.Entity.map_fields_meta.values) |field| {
-                table_ptr = module.pool_mem_tables.active_table_ptr;
+                table_ptr = start_table_ptr;
 
-                while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
+                while (table_ptr < end_table_ptr) : (table_ptr += 1) {
                     const field_items_bytes = std.mem.sliceAsBytes(module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
-                    try module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]);
+                     module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]) catch |err| {
+                    log.err(err);
+                    return Io.Cancelable.Canceled;
+                };
                 }
             }
 
-            
-            table_ptr = module.pool_mem_tables.active_table_ptr;
+            table_ptr = start_table_ptr;
 
-            while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
-                    const index = module.pool_mem_tables.getIndex(table_ptr);
-                    const index_bytes = std.mem.asBytes(index);
+            while (table_ptr < end_table_ptr) : (table_ptr += 1) {
+                const index = module.pool_mem_tables.getIndex(table_ptr);
+                const index_bytes = std.mem.asBytes(index);
 
-                    try module.storage.writeToZone(io, .indexes_level_0, index_bytes);
+                module.storage.writeToZone(io, .indexes_level_0, index_bytes) catch |err| {
+                    log.err(err);
+                    return Io.Cancelable.Canceled;
+                };
 
-                    module.level_0_pool_storage_tables.appendTable(index);
-                    module.pool_mem_tables.clearTable(table_ptr);
+                module.level_0_pool_storage_tables.appendTable(index);
+                module.pool_mem_tables.clearTable(table_ptr);
             }
 
-            module.pool_mem_tables.swapActiveTable();
+            for (block_ptrs_buffer) |block_ptr_clear| {
+                module.pool_mem_tables.blocks[block_ptr_clear].state = .empty;
+            }
         }
 
         pub fn lookupByOrderId(module: *Module, io: Io, value: Components.Entity.OrderId) []const Components.Entity {
@@ -214,7 +260,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
 const TestEntity = @import("order_item_entity.zig").OrderItem;
 
-fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize) ![]*TestEntity {
+fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*TestEntity {
     var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
     errdefer allocator.free(input_entries);
 
@@ -238,137 +284,17 @@ fn testPreparingUniqueEntries(allocator: std.mem.Allocator, entries_total: usize
     return input_entries;
 }
 
-test "Module:pool_mem_tables: nothing to flush on storage" {
+test "1Module insert only to memory and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    const tmp_dir = testing.tmpDir(.{});
-
-    const config_module: ConfigModule = .{
-        .entity = .order_item,
-        .module_name = "order_items",
-        .mem_tables_max_count = 5,
-        .mem_table_filled_limit = 4,
-        .mem_tables_entities_max_count = 5,
-        .mem_tables_reader_buffer_size = 4 * 1024,
-        .level_0_tables_count = 5 * 2,
-    };
-
-    var module: *ModuleType(config_module) = try .init(
-        allocator,
-        io,
-        tmp_dir.dir,
-    );
-    defer module.deinit(allocator, io);
-    // Preparing input data
-    const entities_total = config_module.mem_tables_entities_max_count - 1;
-
-    const input_entities = try testPreparingUniqueEntries(
-        allocator,
-        entities_total,
-    );
-
-    defer {
-        for (input_entities) |entry| allocator.destroy(entry);
-        allocator.free(input_entities);
-    }
-
-    // -------------------
-
-    //==== General test ====
-
-    const insert_result = try module.insertToMemTables(io, input_entities);
-    const expected_entities_flushed = 0;
-
-    try testing.expectEqual(entities_total, insert_result[0]);
-    try testing.expectEqual(expected_entities_flushed, insert_result[1]);
-}
-
-test "Module:pool_mem_tables: limited filled tables to flush on storage" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    const tmp_dir = testing.tmpDir(.{});
-
-    const config_module: ConfigModule = .{ .module_name = "order_items", .mem_tables_max_count = 5, .mem_table_filled_limit = 2, .mem_tables_entities_max_count = 5, .level_0_tables_count = 5 * 2 };
-
-    var module: *ModuleType(config_module) = try .init(
-        allocator,
-        io,
-        tmp_dir.dir,
-    );
-    defer module.deinit(allocator, io);
-    // Preparing input data
-    const entities_total = config_module.mem_table_filled_limit * config_module.mem_tables_entities_max_count;
-
-    const input_entities = try testPreparingUniqueEntries(
-        allocator,
-        entities_total,
-    );
-
-    defer {
-        for (input_entities) |entry| allocator.destroy(entry);
-        allocator.free(input_entities);
-    }
-
-    // -------------------
-
-    //==== General test ====
-
-    const inserted = try module.insertToMemTables(io, input_entities);
-
-    try testing.expectEqual(entities_total, inserted);
-}
-
-test "Module:pool_mem_tables: full-filled tables pool and all flush on storage" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-    const tmp_dir = testing.tmpDir(.{});
-
-    const config_module: ConfigModule = .{
-        .entity = .order_item,
-        .mem_tables_max_count = 4,
-        .mem_table_filled_limit = 2,
-        .mem_tables_entities_max_count = 4,
-        .level_0_tables_count = 4 * 20,
-    };
-
-    var module: *ModuleType(config_module) = try .init(
-        allocator,
-        io,
-        tmp_dir.dir,
-    );
-    defer module.deinit(allocator, io);
-    // Preparing input data
-    const entities_total = config_module.mem_tables_entities_max_count * config_module.mem_tables_max_count * 2;
-
-    const input_entities = try testPreparingUniqueEntries(
-        allocator,
-        entities_total,
-    );
-
-    defer {
-        for (input_entities) |entry| allocator.destroy(entry);
-        allocator.free(input_entities);
-    }
-
-    // -------------------
-
-    //==== General test ====
-
-    const insert_result = try module.insertToMemTables(io, input_entities);
-
-    try testing.expectEqual(entities_total, insert_result);
-}
-
-test "Module insert only to memory and lookup" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
+    
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
     const config_module: ConfigModule = .{
         .entity = .order_item,
-        .mem_tables_max_count = 4,
-        .mem_table_filled_limit = 1,
+        .mem_tables_blocks_count = 2,
+        .mem_tables_count_in_block = 2,
         .mem_tables_entities_max_count = 4,
         .level_0_tables_count = 4 * 2,
         .limit_lookup_results = 200,
@@ -380,6 +306,7 @@ test "Module insert only to memory and lookup" {
         tmp_dir.dir,
     );
     defer module.deinit(allocator, io);
+
     // Preparing input data
     const entities_total = 4;
 
@@ -428,17 +355,25 @@ test "Module insert only to memory and lookup" {
     defer for (input_entities) |entry| allocator.destroy(entry);
     // -------------------
 
-    //==== General test ====
+    // //==== General test ====
     _ = try module.insertToMemTables(io, input_entities);
+    try module.flushFilledMemBlocks(io);
     _ = try module.insertToMemTables(io, input_entities);
+        try module.flushFilledMemBlocks(io);
     _ = try module.insertToMemTables(io, input_entities);
-    _ = try module.insertToMemTables(io, input_entities);
-    _ = try module.insertToMemTables(io, input_entities);
+        try module.flushFilledMemBlocks(io);
 
-    const lookup_result = module.lookupByOrderId(io, 2200);
-    for (lookup_result) |ent| {
-        printObj("OrderItem", ent);
-    }
+    _ = try module.insertToMemTables(io, input_entities);
+        try module.flushFilledMemBlocks(io);
+
+    _ = try module.insertToMemTables(io, input_entities);
+        try module.flushFilledMemBlocks(io);
+
+
+    // const lookup_result = module.lookupByOrderId(io, 2200);
+    // for (lookup_result) |ent| {
+    //     log.obj("OrderItem", ent);
+    // }
 
     // try testing.expectEqual(2, lookup_result.len);
     // try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);

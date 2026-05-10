@@ -10,7 +10,7 @@ const assert = std.debug.assert;
 const testing = std.testing;
 const Allocator = std.mem.Allocator;
 
-const printObj = @import("utils/debug.zig").printObj;
+const print = @import("utils/debug.zig").ModulePrinterType(.mem_tables);
 const stdx_sort = @import("sort.zig");
 
 const index_table = @import("index_table.zig");
@@ -19,7 +19,21 @@ const lookup = @import("lookup.zig");
 
 pub const MemTablePtr = usize;
 pub const MemEntryPtr = usize;
+pub const MemBlockPtr = u8;
 pub const BatchOffset = u16;
+
+pub const Block = struct {
+    pub const State = enum {
+        empty,
+        has_data,
+        filled,
+        started_flush,
+    };
+
+    start_ptr: MemTablePtr,
+    end_ptr: MemTablePtr,
+    state: State,
+};
 
 pub fn MemTableType(comptime config: *const module.ConfigModule) type {
     const Components = config.Components();
@@ -49,7 +63,12 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
         }
 
         /// return unique next time_label
-        pub fn insert(mem_table: *MemTable, entities: []*Components.Entity, batch_time_label: u64, init_batch_offset: BatchOffset,) BatchOffset {
+        pub fn insert(
+            mem_table: *MemTable,
+            entities: []*Components.Entity,
+            batch_time_label: u64,
+            init_batch_offset: BatchOffset,
+        ) BatchOffset {
             var batch_offset = init_batch_offset;
             for (entities) |entity| {
                 entity.time_label = batch_time_label;
@@ -82,17 +101,17 @@ pub fn MemTableType(comptime config: *const module.ConfigModule) type {
     };
 }
 
-const PoolState = enum {
-    empty,
-    started_flush,
-    finished_flush,
-};
-
 pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
     const Components = config.Components();
-    const last_table_ptr = config.mem_tables_max_count - 1;
+    const tables_count = config.mem_tables_count_in_block * config.mem_tables_blocks_count;
+    const last_table_ptr = tables_count - 1;
+    const last_block_ptr = config.mem_tables_blocks_count - 1;
 
     return struct {
+        const State = enum {
+            ready_to_inserts,
+            fullfilled,
+        };
         const MemTablePool = @This();
         const MemTable = Components.MemTable;
         const Index = Components.IndexTable;
@@ -105,24 +124,54 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
 
         sorted_active: bool,
         active_table_ptr: MemTablePtr,
-        start_filled_ptr: MemTablePtr,
-        state: PoolState,
+
+        active_block_ptr: u8,
+        active_block: *Block,
+        blocks: []*Block,
+
+        state: State,
 
         pub fn init(allocator: Allocator) !*MemTablePool {
             var mem_table_pool = try allocator.create(MemTablePool);
-            mem_table_pool.tables = try allocator.alloc(*MemTable, config.mem_tables_max_count);
-            mem_table_pool.indexes = try allocator.alloc(*Index, config.mem_tables_max_count);
+            mem_table_pool.tables = try allocator.alloc(*MemTable, tables_count);
+            mem_table_pool.indexes = try allocator.alloc(*Index, tables_count);
             mem_table_pool.sorted_active = false;
-            mem_table_pool.state = .empty;
+            mem_table_pool.state = .ready_to_inserts;
+
+            mem_table_pool.blocks = try allocator.alloc(*Block, config.mem_tables_blocks_count);
+
+            var block_ptr: MemBlockPtr = last_block_ptr;
+            var block_start_table_ptr: MemTablePtr = tables_count;
+            var block_end_table_ptr: MemTablePtr = tables_count;
+
+            while (block_ptr >= 0): (block_ptr -= 1) {
+                print.obj("block_ptr", block_ptr);
+                mem_table_pool.blocks[block_ptr] = try allocator.create(Block);
+
+                block_end_table_ptr = block_start_table_ptr;
+                block_start_table_ptr -= config.mem_tables_count_in_block;
+
+                mem_table_pool.blocks[block_ptr].* = .{
+                    .state = .empty,
+                    .start_ptr = block_start_table_ptr,
+                    .end_ptr = block_end_table_ptr,
+                };
+
+                if (block_ptr == 0) {
+                    break;
+                }
+            }
+
+            mem_table_pool.active_block_ptr = last_block_ptr;
+            mem_table_pool.active_block = mem_table_pool.blocks[mem_table_pool.active_block_ptr];
 
             var table_ptr: MemTablePtr = 0;
 
-            while (table_ptr < config.mem_tables_max_count) : (table_ptr += 1) {
+            while (table_ptr < tables_count) : (table_ptr += 1) {
                 mem_table_pool.tables[table_ptr] = try .init(allocator);
                 mem_table_pool.indexes[table_ptr] = try .init(allocator);
             }
 
-            mem_table_pool.start_filled_ptr = config.mem_tables_max_count;
             mem_table_pool.active_table_ptr = last_table_ptr;
             mem_table_pool.active_table = mem_table_pool.tables[mem_table_pool.active_table_ptr];
             mem_table_pool.active_index = mem_table_pool.indexes[mem_table_pool.active_table_ptr];
@@ -139,7 +188,14 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             for (table_pool.tables) |table| {
                 table.deinit(allocator);
             }
+
             allocator.free(table_pool.tables);
+
+            for (table_pool.blocks) |block| {
+                allocator.destroy(block);
+            }
+
+            allocator.free(table_pool.blocks);
 
             allocator.destroy(table_pool);
         }
@@ -148,17 +204,22 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             return table_pool.indexes[table_ptr];
         }
 
-        pub fn insert(table_pool: *MemTablePool, entities: []*Components.Entity, batch_time_label: u64, init_batch_offset: BatchOffset) !u16 {
-            // TODO: Temporary solution, lock insert in flushing proccess,
-            // but not need lock active table for concurrency inserting
-            assert(table_pool.state == .finished_flush or table_pool.state == .empty);
-            if (table_pool.start_filled_ptr == 0) {
-                return 0;
-            }
+        pub fn insert(
+            table_pool: *MemTablePool,
+            entities: []*Components.Entity,
+            batch_time_label: u64,
+            init_batch_offset: BatchOffset,
+        ) u16 {
+            assert(entities.len > 0);
+            assert(table_pool.active_block.state == .empty or table_pool.active_block.state == .has_data);
+
+            table_pool.active_block.state = .has_data;
             table_pool.sorted_active = false;
             var entries_start: u16 = 0;
             var entries_end: u16 = 0;
             var batch_offset: BatchOffset = init_batch_offset;
+            var next_active_block_ptr: MemBlockPtr = undefined;
+
             //TODO: P5 maybe move syscall for generate time_label to high level
 
             var attempts: usize = 0;
@@ -183,22 +244,36 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                     batch_time_label,
                     batch_offset,
                 );
-                table_pool.sortActive();
+                table_pool.sortActiveTable();
 
                 table_pool.active_index.rewriteMin(&table_pool.active_table.entities.get(table_pool.active_table.entities.len - 1));
                 table_pool.active_index.rewriteMax(&table_pool.active_table.entities.get(0));
 
                 // Is Active table filled ?
                 if (rest == to_insert.len) {
-                    table_pool.start_filled_ptr -= 1;
+                    if (table_pool.active_block.start_ptr == table_pool.active_table_ptr) {
 
-                    // Pool overflow
-                    if (table_pool.start_filled_ptr == 0) {
-                        return entries_end;
+                        table_pool.active_block.state = .filled;
+                        if (table_pool.active_block_ptr == 0) {
+                            next_active_block_ptr = last_block_ptr;
+                        } else {
+                            next_active_block_ptr -= 1;
+                        }
+                        if (table_pool.blocks[table_pool.active_block_ptr].state != .empty) {
+                            table_pool.state = .fullfilled;
+                            return entries_end;
+                        }
+
+                        table_pool.active_block_ptr = next_active_block_ptr;
+                        table_pool.active_block = table_pool.blocks[table_pool.active_block_ptr];
                     }
 
                     table_pool.sorted_active = false;
-                    table_pool.active_table_ptr -= 1;
+                    if (table_pool.active_table_ptr == 0) {
+                        table_pool.active_table_ptr = last_table_ptr;
+                    } else {
+                        table_pool.active_table_ptr -= 1;
+                    }
                     table_pool.active_table = table_pool.tables[table_pool.active_table_ptr];
                     table_pool.active_index = table_pool.indexes[table_pool.active_table_ptr];
                 }
@@ -209,7 +284,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             return entries_end;
         }
 
-        pub fn sortActive(table_pool: *MemTablePool) void {
+        pub fn sortActiveTable(table_pool: *MemTablePool) void {
             if (table_pool.sorted_active) return;
 
             table_pool.active_table.entities.sortUnstable(Components.Entity.SortCtx{ .entities = table_pool.active_table.entities });
@@ -225,18 +300,19 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             table_pool.tables[last_table_ptr].* = table_pool.tables[table_pool.active_table_ptr].*;
             table_pool.tables[table_pool.active_table_ptr].* = tmp_table;
 
-            table_pool.start_filled_ptr = config.mem_tables_max_count;
             table_pool.active_table_ptr = last_table_ptr;
-
-            table_pool.state = .finished_flush;
         }
 
         pub fn clearTable(table_pool: *MemTablePool, table_ptr: MemTablePtr) void {
-            table_pool.state = .started_flush;
-
             table_pool.tables[table_ptr].clear();
             table_pool.indexes[table_ptr].clear();
         }
+
+        pub fn clearBlock(table_pool: *MemTablePool, block_ptr: MemBlockPtr) void {
+            table_pool.blocks[block_ptr].state = .empty;
+            table_pool.state = .ready_to_inserts;
+        }
+
 
         pub fn getActualEntities(
             mem_table_pool: *MemTablePool,

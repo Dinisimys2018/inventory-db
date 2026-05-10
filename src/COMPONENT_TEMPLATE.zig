@@ -2,7 +2,7 @@
 // const Allocator = std.mem.Allocator;
 // const assert = std.debug.assert;
 
-// const printObj = @import("utils/debug.zig").printObj;
+// const print = @import("utils/debug.zig").ModulePrinterType(.MODULE_INSTANCE);
 // const module = @import("module.zig");
 
 // pub fn MODULE_TYPEType(comptime config: module.ConfigModule) type {
