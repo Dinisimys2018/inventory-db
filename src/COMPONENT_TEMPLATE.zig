@@ -1,8 +1,9 @@
 // const std = @import("std");
 // const Allocator = std.mem.Allocator;
+// const Io = std.Io;
 // const assert = std.debug.assert;
 
-// const print = @import("utils/debug.zig").ModulePrinterType(.MODULE_INSTANCE);
+// const log = @import("utils/debug.zig").ModulePrinterType(.MODULE_INSTANCE);
 // const module = @import("module.zig");
 
 // pub fn MODULE_TYPEType(comptime config: module.ConfigModule) type {

@@ -13,7 +13,7 @@ pub const reader_mem_tables = @import("reader_mem_table.zig");
 pub const storage_table = @import("storage_table.zig");
 pub const lookup = @import("lookup.zig");
 pub const m_entities = @import("entities.zig");
-pub const m_sheduler = @import("scheduler.zig");
+pub const m_queue = @import("queue.zig");
 
 const OrderItem = @import("order_item_entity.zig").OrderItem;
 
@@ -28,6 +28,7 @@ pub const ConfigModule = struct {
     mem_tables_entities_max_count: u16,
     level_0_tables_count: u16,
     limit_lookup_results: u8,
+    queue_messages_count: u8,
 
     pub fn Components(config: *const ConfigModule) type {
         // Use "struct" only for grouping many types to one "namespace"
@@ -45,7 +46,7 @@ pub const ConfigModule = struct {
             pub const Storage = storage.StorageType(config);
             pub const Level_0_PoolStorageTables = storage_table.PoolStorageTablesType(config, 0);
             pub const Lookup = Entity.Lookup(config);
-            pub const Scheduler = m_sheduler.SchedulerType(config);
+            pub const Queue = m_queue.QueueType(config);
 
             // CONSTANTS
             pub const entity_size = m_entities.sizeOf(Entity);
@@ -64,12 +65,13 @@ pub const ConfigModule = struct {
 };
 
 pub fn ModuleType(comptime config: *const ConfigModule) type {
-    const Components = config.Components();
-
     return struct {
+        pub const Components = config.Components();
+
         const Module = @This();
 
         // FIELDS
+        allocator: Allocator,
         map_fields_meta: *Components.Entity.MapMetaFields,
         prev_insert_batch_time_label: u64,
         prev_insert_batch_offset: mem_tables.BatchOffset,
@@ -77,7 +79,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         pool_mem_tables: *Components.MemTablesPool,
         lookup: *Components.Lookup,
         level_0_pool_storage_tables: *Components.Level_0_PoolStorageTables,
-        scheduler: *Components.Scheduler,
+        queue: *Components.Queue,
 
         pub fn init(allocator: Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *Components.GlobalZoneStorage = try .init(allocator, 0);
@@ -97,6 +99,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
             var module = try allocator.create(Module);
 
+            module.allocator = allocator;
             module.map_fields_meta = try allocator.create(Components.Entity.MapMetaFields);
             module.map_fields_meta.* = Components.Entity.map_fields_meta;
 
@@ -105,29 +108,18 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.storage = storage_module;
             module.level_0_pool_storage_tables = try .init(allocator, module);
             module.lookup = try .init(allocator, module, config.limit_lookup_results);
+            module.queue = try .init(allocator);
             module.prev_insert_batch_offset = 0;
             module.prev_insert_batch_time_label = 0;
             // TODO: P2 REBUILD
             // Resolve conflict between different configs (storage vs comptime)
             try module.storage.writeToZone(io, .headers_level_0, &module.level_0_pool_storage_tables.headers_encoded);
 
-            module.scheduler = try .init(allocator);
-
-            try module.scheduler.appendTask(
-                allocator,
-                Module.flushFilledMemBlocks,
-                .{ module, io },
-                .{
-                    .every_millisec = 5000,
-                },
-            );
-
             return module;
         }
 
         pub fn deinit(module: *Module, allocator: Allocator, io: std.Io) void {
-            module.scheduler.deinit(allocator);
-
+            module.queue.deinit(allocator, io);
             allocator.destroy(module.map_fields_meta);
             module.storage.deinit(allocator, io);
             module.lookup.deinit(allocator);
@@ -138,7 +130,30 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             allocator.destroy(module);
         }
 
-        pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !u16 {
+        pub fn runScheduler(module: *Module, io: Io) !void {
+            while (true) {
+                try module.tick(io);
+                io.sleep(std.Io.Duration.fromMilliseconds(5000), .awake) catch {};
+            }
+        }
+
+        pub fn tick(module: *Module, io: Io) !void {
+            var group: Io.Group = .init;
+            defer group.cancel(io);
+
+            while (true) {
+                const message = try module.queue.getOne(io);
+
+                switch (message.command) {
+                    .insert => |socket_reader| group.async(io, Module.insertToMemTablesFromSocket, .{ module, io, socket_reader }),
+                    .flush_mem_tables => group.async(io, Module.flushFilledMemBlocks, .{ module, io }),
+                }
+            }
+
+            try group.await(io);
+        }
+
+        pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !void {
             var inserted_total: u16 = 0;
             var inserted: u16 = 0;
             var attempts: u8 = 0;
@@ -158,7 +173,8 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                 assert(attempts < 20);
 
                 if (module.pool_mem_tables.state != .ready_to_inserts) {
-                    io.sleep(std.Io.Duration.fromMilliseconds(1), .awake) catch {};
+                    log.obj("sleep", module.pool_mem_tables.state);
+                    io.sleep(std.Io.Duration.fromMilliseconds(500), .awake) catch {};
                     continue;
                 }
 
@@ -167,19 +183,69 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                     batch_time_label,
                     batch_offset,
                 );
-                    log.obj("pool state after insert", module.pool_mem_tables.state);
+
+                log.obj("pool state after insert", .{ .inserted = inserted, .state = module.pool_mem_tables.state });
 
                 batch_offset += inserted;
                 inserted_total += inserted;
             }
 
             module.prev_insert_batch_offset = batch_offset;
+        }
 
-            return inserted;
+        fn readIntLittle(reader: anytype, comptime T: type) !T {
+            var buf: [@sizeOf(T)]u8 = undefined;
+            try reader.readSliceAll(buf[0..]);
+            return std.mem.readInt(T, buf[0..], .little);
+        }
+
+        pub fn insertToMemTablesFromSocket(module: *Module, io: Io, socket_reader: *m_queue.SocketReader) !void {
+            // Wire format (little-endian):
+            // - `u16 entities_count`
+            // - repeated `entities_count` times:
+            //     - for `.order_item`: `u32 order_id`, `u32 product_id`, `u32 quantity`
+            //
+            // `time_label` and `batch_offset` are server-side fields and will be overwritten during insert.
+            const reader = socket_reader.reader.interface;
+
+            const entities_count: u16 = try readIntLittle(reader, u16);
+            if (entities_count == 0) return;
+
+            var entities_buf = try module.allocator.alloc(Components.Entity, entities_count);
+            defer module.allocator.free(entities_buf);
+
+            var entity_ptrs = try module.allocator.alloc(*Components.Entity, entities_count);
+            defer module.allocator.free(entity_ptrs);
+
+            var i: u16 = 0;
+            while (i < entities_count) : (i += 1) {
+                switch (config.entity) {
+                    .order_item => {
+                        const order_id: Components.Entity.OrderId = try readIntLittle(reader, Components.Entity.OrderId);
+                        const product_id: Components.Entity.ProductId = try readIntLittle(reader, Components.Entity.ProductId);
+                        const quantity: Components.Entity.Quantity = try readIntLittle(reader, Components.Entity.Quantity);
+
+                        entities_buf[i] = .{
+                            .time_label = 0,
+                            .batch_offset = 0,
+                            .order_id = order_id,
+                            .product_id = product_id,
+                            .quantity = quantity,
+                        };
+                    },
+                }
+
+                entity_ptrs[i] = &entities_buf[i];
+            }
+
+            return module.insertToMemTables(io, entity_ptrs);
         }
 
         pub fn flushFilledMemBlocks(module: *Module, io: Io) Io.Cancelable!void {
-            log.obj("flushFilledMemBlocks",  module.pool_mem_tables.blocks[1]);
+            // TODO: P2 flushFilledMemBlocks
+            // Use async IO for concurrency, maybe also Batch for low-level IO batching
+            log.obj("flushFilledMemBlocks blocks", module.pool_mem_tables.blocks);
+            log.obj("flushFilledMemBlocks active_block_ptr", module.pool_mem_tables.active_block_ptr);
 
             const last_block_ptr = config.mem_tables_blocks_count - 1;
             var block_ptr = module.pool_mem_tables.active_block_ptr;
@@ -195,10 +261,9 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                     block_ptr = 0;
                 }
                 block = module.pool_mem_tables.blocks[block_ptr];
-                                    log.obj("check block", block);
+                log.obj("check block", block);
 
                 if (block.state == .filled) {
-
                     block.state = .started_flush;
                     if (block_ptrs_idx == 0) {
                         start_table_ptr = block.start_ptr;
@@ -211,6 +276,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                 }
                 block_ptr += 1;
             }
+
             log.obj("block_ptrs_idx", block_ptrs_idx);
 
             log.obj("block_ptrs_buffer", block_ptrs_buffer);
@@ -223,10 +289,10 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
                 while (table_ptr < end_table_ptr) : (table_ptr += 1) {
                     const field_items_bytes = std.mem.sliceAsBytes(module.pool_mem_tables.tables[table_ptr].entities.items(field.tag));
-                     module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]) catch |err| {
-                    log.err(err);
-                    return Io.Cancelable.Canceled;
-                };
+                    module.storage.writeToZone(io, .tables_level_0, field_items_bytes[0..]) catch |err| {
+                        log.err(err);
+                        return Io.Cancelable.Canceled;
+                    };
                 }
             }
 
@@ -245,8 +311,8 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                 module.pool_mem_tables.clearTable(table_ptr);
             }
 
-            for (block_ptrs_buffer) |block_ptr_clear| {
-                module.pool_mem_tables.blocks[block_ptr_clear].state = .empty;
+            for (block_ptrs_buffer[0..block_ptrs_idx]) |block_ptr_clear| {
+                module.pool_mem_tables.clearBlock(block_ptr_clear);
             }
         }
 
@@ -259,6 +325,12 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 // TESTING
 
 const TestEntity = @import("order_item_entity.zig").OrderItem;
+
+fn writeIntLittle(writer: *std.Io.Writer, comptime T: type, value: T) !void {
+    var buf: [@sizeOf(T)]u8 = undefined;
+    std.mem.writeInt(T, buf[0..], value, .little);
+    try writer.writeAll(buf[0..]);
+}
 
 fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*TestEntity {
     var input_entries: []*TestEntity = try allocator.alloc(*TestEntity, entries_total);
@@ -284,10 +356,10 @@ fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*Te
     return input_entries;
 }
 
-test "1Module insert only to memory and lookup" {
+test "Module insert only to memory and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
-    
+
     var tmp_dir = testing.tmpDir(.{});
     defer tmp_dir.cleanup();
 
@@ -298,9 +370,12 @@ test "1Module insert only to memory and lookup" {
         .mem_tables_entities_max_count = 4,
         .level_0_tables_count = 4 * 2,
         .limit_lookup_results = 200,
+        .queue_messages_count = 10,
     };
 
-    var module: *ModuleType(&config_module) = try .init(
+    const ModuleTest = ModuleType(&config_module);
+
+    var module: *ModuleTest = try .init(
         allocator,
         io,
         tmp_dir.dir,
@@ -356,26 +431,157 @@ test "1Module insert only to memory and lookup" {
     // -------------------
 
     // //==== General test ====
-    _ = try module.insertToMemTables(io, input_entities);
-    try module.flushFilledMemBlocks(io);
-    _ = try module.insertToMemTables(io, input_entities);
-        try module.flushFilledMemBlocks(io);
-    _ = try module.insertToMemTables(io, input_entities);
-        try module.flushFilledMemBlocks(io);
+    var i: u8 = 1;
 
-    _ = try module.insertToMemTables(io, input_entities);
-        try module.flushFilledMemBlocks(io);
+    while (i <= 4) : (i += 1) {
+        var group: Io.Group = .init;
+        group.async(io, ModuleTest.insertToMemTables, .{ module, io, input_entities });
+        group.async(io, ModuleTest.flushFilledMemBlocks, .{ module, io });
 
-    _ = try module.insertToMemTables(io, input_entities);
-        try module.flushFilledMemBlocks(io);
+        try group.await(io);
+    }
 
+    const lookup_result = module.lookupByOrderId(io, 2200);
+    for (lookup_result) |ent| {
+        log.obj("OrderItem", ent);
+    }
 
-    // const lookup_result = module.lookupByOrderId(io, 2200);
-    // for (lookup_result) |ent| {
-    //     log.obj("OrderItem", ent);
-    // }
+    try testing.expectEqual(8, lookup_result.len);
+    try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
+    try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
+    // lookup
+    // insert
+    // flush_to_storage
+}
 
-    // try testing.expectEqual(2, lookup_result.len);
-    // try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
-    // try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
+test "Module insert via socket stream and lookup" {
+    const allocator = std.testing.allocator;
+    const io = std.testing.io;
+
+    var tmp_dir = testing.tmpDir(.{});
+    defer tmp_dir.cleanup();
+
+    const config_module: ConfigModule = .{
+        .entity = .order_item,
+        .mem_tables_blocks_count = 2,
+        .mem_tables_count_in_block = 2,
+        .mem_tables_entities_max_count = 4,
+        .level_0_tables_count = 4 * 2,
+        .limit_lookup_results = 200,
+        .queue_messages_count = 10,
+    };
+
+    const ModuleTest = ModuleType(&config_module);
+
+    var module: *ModuleTest = try .init(
+        allocator,
+        io,
+        tmp_dir.dir,
+    );
+    defer module.deinit(allocator, io);
+
+    // Preparing input data
+    const entities_total = 4;
+
+    var input_entities = try allocator.alloc(*TestEntity, entities_total);
+    defer allocator.free(input_entities);
+
+    for (0..entities_total) |index| {
+        input_entities[index] = try allocator.create(TestEntity);
+    }
+
+    input_entities[0].* = .{
+        .batch_offset = 0,
+        .time_label = 0,
+        .order_id = 1100,
+        .product_id = 110,
+        .quantity = 10,
+    };
+
+    input_entities[1].* = .{
+        .batch_offset = 0,
+
+        .time_label = 0,
+        .order_id = 2200,
+        .product_id = 220,
+        .quantity = 20,
+    };
+
+    input_entities[2].* = .{
+        .batch_offset = 0,
+
+        .time_label = 0,
+        .order_id = 3300,
+        .product_id = 330,
+        .quantity = 30,
+    };
+
+    input_entities[3].* = .{
+        .batch_offset = 0,
+
+        .time_label = 0,
+        .order_id = 2200,
+        .product_id = 440,
+        .quantity = 40,
+    };
+
+    defer for (input_entities) |entry| allocator.destroy(entry);
+    // -------------------
+
+    //==== General test ====
+    var iter: u8 = 0;
+    while (iter < 4) : (iter += 1) {
+        const streams: [2]Io.net.Stream = try createUnixSocketPairStreams();
+        const server_stream = streams[0];
+        const client_stream = streams[1];
+        defer client_stream.close(io);
+
+        var w_buf: [128]u8 = undefined;
+        var w = client_stream.writer(io, w_buf[0..]);
+
+        try writeIntLittle(&w.interface, u16, @intCast(input_entities.len));
+        for (input_entities) |ent| {
+            try writeIntLittle(&w.interface, TestEntity.OrderId, ent.order_id);
+            try writeIntLittle(&w.interface, TestEntity.ProductId, ent.product_id);
+            try writeIntLittle(&w.interface, TestEntity.Quantity, ent.quantity);
+        }
+        try w.interface.flush();
+
+        const socket_reader: *m_queue.SocketReader = try .init(allocator, io, server_stream);
+        defer socket_reader.deinit(allocator, io);
+
+        var group: Io.Group = .init;
+        group.async(io, ModuleTest.insertToMemTablesFromSocket, .{ module, io, socket_reader });
+        group.async(io, ModuleTest.flushFilledMemBlocks, .{ module, io });
+        try group.await(io);
+    }
+
+    const lookup_result = module.lookupByOrderId(io, 2200);
+    try testing.expectEqual(8, lookup_result.len);
+    try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
+    try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
+}
+
+fn createUnixSocketPairStreams() ![2]Io.net.Stream {
+    var fds: [2]std.posix.socket_t = undefined;
+    while (true) switch (std.posix.errno(std.posix.system.socketpair(
+        std.posix.AF.UNIX,
+        std.posix.SOCK.STREAM | std.posix.SOCK.CLOEXEC,
+        0,
+        &fds,
+    ))) {
+        .SUCCESS => break,
+        .INTR => continue,
+        .ACCES => return error.AccessDenied,
+        .MFILE => return error.ProcessFdQuotaExceeded,
+        .NFILE => return error.SystemFdQuotaExceeded,
+        .NOBUFS, .NOMEM => return error.SystemResources,
+        else => return error.Unexpected,
+    };
+
+    const dummy_addr: Io.net.IpAddress = .{ .ip4 = Io.net.Ip4Address.unspecified(0) };
+    return .{
+        .{ .socket = .{ .handle = fds[0], .address = dummy_addr } },
+        .{ .socket = .{ .handle = fds[1], .address = dummy_addr } },
+    };
 }

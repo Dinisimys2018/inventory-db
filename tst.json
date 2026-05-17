@@ -1,0 +1,95 @@
+{
+    "data": [
+        {
+            "channelId": "6539000000014001",
+            "status": "ON_PROGRESS",
+            "createdTime": "2026-04-29T14:43:58.541Z",
+            "agentId": "710402222",
+            "botId": null,
+            "actor": {
+                "name": "Денис",
+                "type": "ENDUSER",
+                "photoURL": null,
+                "externalId": "8423432629",
+                "id": "501889000007375215",
+                "email": null,
+                "contactId": "501889000007375173",
+                "botType": null,
+                "contactName": "Денис"
+            },
+            "subject": "що вам треба?",
+            "messagesCount": "248",
+            "agentLastActiveTime": "2026-05-13T06:33:30.140Z",
+            "contactLastActiveTime": "2026-05-06T11:18:22.088Z",
+            "lastActiveTime": "2026-05-13T06:33:30.147Z",
+            "unreadMessagesCount": "0",
+            "integrationService": "TELEGRAM",
+            "replyStatus": "CHANNEL_DELETED",
+            "id": "6539000000015026",
+            "contactId": "501889000007375173",
+            "meta": {
+                "DESK_TICKET_NUMBER": "413",
+                "DESK_TICKET_ID": "501889000007329001",
+                "DESK_CX_HAPPINESS_SURVEY_STATE": "RATING"
+            },
+            "deskAssignee": {
+                "name": "user4 user4",
+                "type": "AGENT",
+                "photoURL": "https://desk.zoho.com/api/v1/agents/501889000000134033/photo?orgId=714987616",
+                "externalId": null,
+                "id": "501889000000134033",
+                "email": "info2@crmoz.com",
+                "contactId": null,
+                "botType": null,
+                "contactName": null
+            },
+            "channel": "ZOHO_DESK_DEMO_4_BOT"
+        },
+        {
+            "channelId": "6539000000014001",
+            "status": "ENDED",
+            "createdTime": "2026-04-30T06:07:13.883Z",
+            "agentId": "710402222",
+            "botId": null,
+            "actor": {
+                "name": "Маріанна",
+                "type": "ENDUSER",
+                "photoURL": null,
+                "externalId": "6212319350",
+                "id": "501889000007366043",
+                "email": null,
+                "contactId": "501889000007366001",
+                "botType": null,
+                "contactName": "Маріанна"
+            },
+            "subject": "How would you rate the quality of our service?",
+            "messagesCount": "10",
+            "agentLastActiveTime": "2026-05-13T06:33:13.741Z",
+            "contactLastActiveTime": "2026-04-30T06:07:13.887Z",
+            "lastActiveTime": "2026-05-13T06:33:13.741Z",
+            "unreadMessagesCount": "1",
+            "integrationService": "TELEGRAM",
+            "replyStatus": "CHANNEL_DELETED",
+            "id": "6539000000017028",
+            "contactId": "501889000007366001",
+            "meta": {
+                "DESK_TICKET_NUMBER": "410",
+                "DESK_TICKET_ID": "501889000007291087",
+                "DESK_CX_HAPPINESS_SURVEY_STATE": "RATING"
+            },
+            "deskAssignee": {
+                "name": "user4 user4",
+                "type": "AGENT",
+                "photoURL": "https://desk.zoho.com/api/v1/agents/501889000000134033/photo?orgId=714987616",
+                "externalId": null,
+                "id": "501889000000134033",
+                "email": "info2@crmoz.com",
+                "contactId": null,
+                "botType": null,
+                "contactName": null
+            },
+            "channel": "ZOHO_DESK_DEMO_4_BOT"
+        }
+    ],
+    "hasMore": false
+}

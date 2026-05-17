@@ -257,12 +257,17 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                         if (table_pool.active_block_ptr == 0) {
                             next_active_block_ptr = last_block_ptr;
                         } else {
-                            next_active_block_ptr -= 1;
+                            next_active_block_ptr = table_pool.active_block_ptr - 1;
                         }
-                        if (table_pool.blocks[table_pool.active_block_ptr].state != .empty) {
+
+                        print.obj("next_active_block_ptr", next_active_block_ptr);
+
+                        if (table_pool.blocks[next_active_block_ptr].state != .empty) {
+                            print.obj("insert fullfiled", .{});
                             table_pool.state = .fullfilled;
                             return entries_end;
                         }
+                        print.obj("insert filled", .{.active_block_ptr = table_pool.active_block_ptr, .next_active_block_ptr = next_active_block_ptr, });
 
                         table_pool.active_block_ptr = next_active_block_ptr;
                         table_pool.active_block = table_pool.blocks[table_pool.active_block_ptr];
@@ -304,6 +309,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
         }
 
         pub fn clearTable(table_pool: *MemTablePool, table_ptr: MemTablePtr) void {
+            print.obj("clearTable", table_ptr);
             table_pool.tables[table_ptr].clear();
             table_pool.indexes[table_ptr].clear();
         }

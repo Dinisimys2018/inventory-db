@@ -18,9 +18,9 @@ const debug_config: DebugConfig = .{
     .modules = .init(.{
         .module = true,
         .storage = false,
-        .lookup = false,
-        .mem_tables = true,
-        .scheduler = true,
+        .lookup = true,
+        .mem_tables = false,
+        .scheduler = false,
     }),
 };
 
