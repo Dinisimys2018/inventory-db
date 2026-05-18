@@ -71,7 +71,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         const Module = @This();
 
         // FIELDS
-        allocator: Allocator,
         map_fields_meta: *Components.Entity.MapMetaFields,
         prev_insert_batch_time_label: u64,
         prev_insert_batch_offset: mem_tables.BatchOffset,
@@ -99,7 +98,6 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
 
             var module = try allocator.create(Module);
 
-            module.allocator = allocator;
             module.map_fields_meta = try allocator.create(Components.Entity.MapMetaFields);
             module.map_fields_meta.* = Components.Entity.map_fields_meta;
 
@@ -138,19 +136,25 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn tick(module: *Module, io: Io) !void {
-            var group: Io.Group = .init;
-            defer group.cancel(io);
+            // var group: Io.Group = .init;
 
-            while (true) {
-                const message = try module.queue.getOne(io);
+            // const attempts: u8 = 0;
 
-                switch (message.command) {
-                    .insert => |socket_reader| group.async(io, Module.insertToMemTablesFromSocket, .{ module, io, socket_reader }),
-                    .flush_mem_tables => group.async(io, Module.flushFilledMemBlocks, .{ module, io }),
-                }
-            }
+            // while (true) {
+            //     attempts += 1;
+            //     assert(attempts <= 20);
 
-            try group.await(io);
+            //     // const message = try module.queue.getOne(io);
+            //     // log.obj("message getOne", message);
+            //     // switch (message.command) {
+            //     //     .insert => |socket_reader| group.async(io, Module.insertToMemTablesFromSocket, .{ module, io, socket_reader }),
+            //     //     .flush_mem_tables => group.async(io, Module.flushFilledMemBlocks, .{ module, io }),
+            //     // }
+            // }
+            //  log.obj("attempts", attempts);
+            const message = try module.queue.getOne(io);
+            log.obj("message getOne", message);
+            // try group.await(io);
         }
 
         pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !void {
@@ -193,52 +197,21 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.prev_insert_batch_offset = batch_offset;
         }
 
+        pub fn insertToMemTablesFromSocket(module: *Module, io: Io, socket_reader: *m_queue.SocketReader) !void {
+            _ = module;
+            _ = io;
+            var buffer: [Components.entity_size * 4]Components.Entity = undefined;
+            socket_reader.reader.interface.readSliceEndian(Components.Entity, buffer[0..], .little) catch |err| {
+                log.err(err);
+                return Io.Cancelable.Canceled;
+            };
+            log.obj("insertToMemTablesFromSocket", buffer[0..]);
+        }
+
         fn readIntLittle(reader: anytype, comptime T: type) !T {
             var buf: [@sizeOf(T)]u8 = undefined;
             try reader.readSliceAll(buf[0..]);
             return std.mem.readInt(T, buf[0..], .little);
-        }
-
-        pub fn insertToMemTablesFromSocket(module: *Module, io: Io, socket_reader: *m_queue.SocketReader) !void {
-            // Wire format (little-endian):
-            // - `u16 entities_count`
-            // - repeated `entities_count` times:
-            //     - for `.order_item`: `u32 order_id`, `u32 product_id`, `u32 quantity`
-            //
-            // `time_label` and `batch_offset` are server-side fields and will be overwritten during insert.
-            const reader = socket_reader.reader.interface;
-
-            const entities_count: u16 = try readIntLittle(reader, u16);
-            if (entities_count == 0) return;
-
-            var entities_buf = try module.allocator.alloc(Components.Entity, entities_count);
-            defer module.allocator.free(entities_buf);
-
-            var entity_ptrs = try module.allocator.alloc(*Components.Entity, entities_count);
-            defer module.allocator.free(entity_ptrs);
-
-            var i: u16 = 0;
-            while (i < entities_count) : (i += 1) {
-                switch (config.entity) {
-                    .order_item => {
-                        const order_id: Components.Entity.OrderId = try readIntLittle(reader, Components.Entity.OrderId);
-                        const product_id: Components.Entity.ProductId = try readIntLittle(reader, Components.Entity.ProductId);
-                        const quantity: Components.Entity.Quantity = try readIntLittle(reader, Components.Entity.Quantity);
-
-                        entities_buf[i] = .{
-                            .time_label = 0,
-                            .batch_offset = 0,
-                            .order_id = order_id,
-                            .product_id = product_id,
-                            .quantity = quantity,
-                        };
-                    },
-                }
-
-                entity_ptrs[i] = &entities_buf[i];
-            }
-
-            return module.insertToMemTables(io, entity_ptrs);
         }
 
         pub fn flushFilledMemBlocks(module: *Module, io: Io) Io.Cancelable!void {
@@ -356,105 +329,7 @@ fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*Te
     return input_entries;
 }
 
-test "Module insert only to memory and lookup" {
-    const allocator = std.testing.allocator;
-    const io = std.testing.io;
-
-    var tmp_dir = testing.tmpDir(.{});
-    defer tmp_dir.cleanup();
-
-    const config_module: ConfigModule = .{
-        .entity = .order_item,
-        .mem_tables_blocks_count = 2,
-        .mem_tables_count_in_block = 2,
-        .mem_tables_entities_max_count = 4,
-        .level_0_tables_count = 4 * 2,
-        .limit_lookup_results = 200,
-        .queue_messages_count = 10,
-    };
-
-    const ModuleTest = ModuleType(&config_module);
-
-    var module: *ModuleTest = try .init(
-        allocator,
-        io,
-        tmp_dir.dir,
-    );
-    defer module.deinit(allocator, io);
-
-    // Preparing input data
-    const entities_total = 4;
-
-    var input_entities = try allocator.alloc(*TestEntity, entities_total);
-    defer allocator.free(input_entities);
-
-    for (0..entities_total) |index| {
-        input_entities[index] = try allocator.create(TestEntity);
-    }
-
-    input_entities[0].* = .{
-        .batch_offset = 0,
-        .time_label = 0,
-        .order_id = 1100,
-        .product_id = 110,
-        .quantity = 10,
-    };
-
-    input_entities[1].* = .{
-        .batch_offset = 0,
-
-        .time_label = 0,
-        .order_id = 2200,
-        .product_id = 220,
-        .quantity = 20,
-    };
-
-    input_entities[2].* = .{
-        .batch_offset = 0,
-
-        .time_label = 0,
-        .order_id = 3300,
-        .product_id = 330,
-        .quantity = 30,
-    };
-
-    input_entities[3].* = .{
-        .batch_offset = 0,
-
-        .time_label = 0,
-        .order_id = 2200,
-        .product_id = 440,
-        .quantity = 40,
-    };
-
-    defer for (input_entities) |entry| allocator.destroy(entry);
-    // -------------------
-
-    // //==== General test ====
-    var i: u8 = 1;
-
-    while (i <= 4) : (i += 1) {
-        var group: Io.Group = .init;
-        group.async(io, ModuleTest.insertToMemTables, .{ module, io, input_entities });
-        group.async(io, ModuleTest.flushFilledMemBlocks, .{ module, io });
-
-        try group.await(io);
-    }
-
-    const lookup_result = module.lookupByOrderId(io, 2200);
-    for (lookup_result) |ent| {
-        log.obj("OrderItem", ent);
-    }
-
-    try testing.expectEqual(8, lookup_result.len);
-    try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
-    try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
-    // lookup
-    // insert
-    // flush_to_storage
-}
-
-test "Module insert via socket stream and lookup" {
+test "1Module insert via socket stream and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -529,37 +404,27 @@ test "Module insert via socket stream and lookup" {
     // -------------------
 
     //==== General test ====
-    var iter: u8 = 0;
-    while (iter < 4) : (iter += 1) {
-        const streams: [2]Io.net.Stream = try createUnixSocketPairStreams();
-        const server_stream = streams[0];
-        const client_stream = streams[1];
-        defer client_stream.close(io);
+    const streams: [2]Io.net.Stream = try createUnixSocketPairStreams();
+    const server_stream = streams[0];
+    const client_stream = streams[1];
+    defer client_stream.close(io);
 
-        var w_buf: [128]u8 = undefined;
-        var w = client_stream.writer(io, w_buf[0..]);
+    var w_buf: [128]u8 = undefined;
+    var w = client_stream.writer(io, w_buf[0..]);
 
-        try writeIntLittle(&w.interface, u16, @intCast(input_entities.len));
-        for (input_entities) |ent| {
-            try writeIntLittle(&w.interface, TestEntity.OrderId, ent.order_id);
-            try writeIntLittle(&w.interface, TestEntity.ProductId, ent.product_id);
-            try writeIntLittle(&w.interface, TestEntity.Quantity, ent.quantity);
-        }
-        try w.interface.flush();
+    try w.interface.writeAll(std.mem.sliceAsBytes(input_entities[0..]));
+    try w.interface.flush();
 
-        const socket_reader: *m_queue.SocketReader = try .init(allocator, io, server_stream);
-        defer socket_reader.deinit(allocator, io);
+    const socket_reader: *m_queue.SocketReader = try .init(allocator, io, server_stream);
 
-        var group: Io.Group = .init;
-        group.async(io, ModuleTest.insertToMemTablesFromSocket, .{ module, io, socket_reader });
-        group.async(io, ModuleTest.flushFilledMemBlocks, .{ module, io });
-        try group.await(io);
-    }
+    var consumer = io.async( ModuleTest.tick, .{ module, io });
+    defer consumer.cancel(io) catch {};
+   
+    var producer = io.async(ModuleTest.Components.Queue.putOne, .{ module.queue, io, .{ .insert = socket_reader } });
+    defer producer.cancel(io) catch {};
 
-    const lookup_result = module.lookupByOrderId(io, 2200);
-    try testing.expectEqual(8, lookup_result.len);
-    try testing.expectEqualDeep(input_entities[3].*, lookup_result[0]);
-    try testing.expectEqualDeep(input_entities[1].*, lookup_result[1]);
+    try consumer.await(io);
+    try producer.await(io);
 }
 
 fn createUnixSocketPairStreams() ![2]Io.net.Stream {

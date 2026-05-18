@@ -16,21 +16,18 @@ pub const SocketReader = struct {
     const buf_size = 4096;
 
     pub fn init(allocator: Allocator, io: Io, stream: net.Stream) !*SocketReader {
-        const reader = try allocator.create(SocketReader);
-        const buf = try allocator.alloc(u8, buf_size);
+        const socket_reader = try allocator.create(SocketReader);
+        socket_reader.buf = try allocator.alloc(u8, buf_size);
 
-        reader.* = .{
-            .stream = stream,
-            .buf = buf,
-            .reader = stream.reader(io, buf),
-        };
-        return reader;
+        socket_reader.stream = stream;
+            socket_reader.reader = stream.reader(io, socket_reader.buf);
+                    return socket_reader;
     }
 
-    pub fn deinit(reader: *SocketReader, allocator: Allocator, io: Io) void {
-        reader.stream.close(io);
-        allocator.free(reader.buf);
-        allocator.destroy(reader);
+    pub fn deinit(socket_reader: *SocketReader, allocator: Allocator, io: Io) void {
+        socket_reader.stream.close(io);
+        allocator.free(socket_reader.buf);
+        allocator.destroy(socket_reader);
     }
 };
 
@@ -52,6 +49,7 @@ const Message = struct {
     planned_ms: u32,
 
     pub fn deinitContents(message: *Message, allocator: Allocator, io: Io) void {
+        
         switch (message.command) {
             Command.insert => message.command.insert.deinit(allocator, io),
             Command.flush_mem_tables => {},
@@ -102,27 +100,21 @@ pub fn QueueType(comptime config: *const module.ConfigModule) type {
         pub fn deinit(queue: *Queue, allocator: Allocator, io: Io) void {
             queue.messages.close(io);
 
-            while (true) {
-                const message = queue.messages.getOneUncancelable(io) catch |err| switch (err) {
-                    error.Closed => break,
-                };
-                message.deinitContents(allocator, io);
-            }
-
             // Free the whole message pool (some entries may never have been queued).
             for (queue.buffer) |message| {
-                allocator.destroy(message);
+                message.deinit(allocator, io);
             }
 
             allocator.free(queue.buffer);
             allocator.destroy(queue);
         }
 
-        pub fn putOne(queue: *Queue, io: Io, command: Command) (Io.QueueClosedError || Io.Cancelable)!void {
+        pub fn putOne(queue: *Queue, io: Io, command: Command) !void {
             var message = queue.buffer[queue.last_message_ptr];
             message.command = command;
             queue.last_message_ptr += 1;
-            return queue.messages.putOne(io, message);
+            log.obj("putOne", message);
+            try queue.messages.putOne(io, message);
         }
 
         pub fn getOne(queue: *Queue, io: Io) (Io.QueueClosedError || Io.Cancelable)!*Message {
