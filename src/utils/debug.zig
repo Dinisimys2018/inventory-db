@@ -38,6 +38,14 @@ pub fn ModulePrinterType(comptime module: Module) type {
             }
         }
 
+         pub fn msg(title: []const u8) void {
+            //TODO: P5 UTILS_DEBUG
+            // Research comptime conditional
+            if (module_config) {
+                std.debug.print("\n=== MODULE{any} ===\n... {s} ...\n=====================\n", .{module, title });
+            }
+        }
+
         pub fn obj(title: []const u8, value: anytype) void {
             //TODO: P5 UTILS_DEBUG
             // Research comptime conditional

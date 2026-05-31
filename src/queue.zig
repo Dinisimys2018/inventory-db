@@ -20,8 +20,9 @@ pub const SocketReader = struct {
         socket_reader.buf = try allocator.alloc(u8, buf_size);
 
         socket_reader.stream = stream;
-            socket_reader.reader = stream.reader(io, socket_reader.buf);
-                    return socket_reader;
+        socket_reader.reader = stream.reader(io, socket_reader.buf);
+        
+        return socket_reader;
     }
 
     pub fn deinit(socket_reader: *SocketReader, allocator: Allocator, io: Io) void {
@@ -109,12 +110,12 @@ pub fn QueueType(comptime config: *const module.ConfigModule) type {
             allocator.destroy(queue);
         }
 
-        pub fn putOne(queue: *Queue, io: Io, command: Command) !void {
+        pub fn putOne(queue: *Queue, io: Io, command: Command) void {
             var message = queue.buffer[queue.last_message_ptr];
             message.command = command;
             queue.last_message_ptr += 1;
             log.obj("putOne", message);
-            try queue.messages.putOne(io, message);
+            queue.messages.putOne(io, message) catch return;
         }
 
         pub fn getOne(queue: *Queue, io: Io) (Io.QueueClosedError || Io.Cancelable)!*Message {

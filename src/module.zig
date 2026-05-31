@@ -79,6 +79,9 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         lookup: *Components.Lookup,
         level_0_pool_storage_tables: *Components.Level_0_PoolStorageTables,
         queue: *Components.Queue,
+        //TODO: P1 Need to re-check using, maybe remove
+        insert_entities_buffer: []Components.Entity,
+        insert_entities_ptrs: []*Components.Entity,
 
         pub fn init(allocator: Allocator, io: std.Io, storage_base_dir: std.Io.Dir) !*Module {
             var global_zone_storage: *Components.GlobalZoneStorage = try .init(allocator, 0);
@@ -109,6 +112,13 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.queue = try .init(allocator);
             module.prev_insert_batch_offset = 0;
             module.prev_insert_batch_time_label = 0;
+
+            module.insert_entities_buffer = try allocator.alloc(Components.Entity, 4);
+            module.insert_entities_ptrs = try allocator.alloc(*Components.Entity, 4);
+            for (module.insert_entities_buffer, 0..) |*entity, i| {
+                module.insert_entities_ptrs[i] = entity;
+            }
+
             // TODO: P2 REBUILD
             // Resolve conflict between different configs (storage vs comptime)
             try module.storage.writeToZone(io, .headers_level_0, &module.level_0_pool_storage_tables.headers_encoded);
@@ -117,6 +127,9 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         }
 
         pub fn deinit(module: *Module, allocator: Allocator, io: std.Io) void {
+            allocator.free(module.insert_entities_buffer);
+            allocator.free(module.insert_entities_ptrs);
+
             module.queue.deinit(allocator, io);
             allocator.destroy(module.map_fields_meta);
             module.storage.deinit(allocator, io);
@@ -135,26 +148,28 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             }
         }
 
-        pub fn tick(module: *Module, io: Io) !void {
-            // var group: Io.Group = .init;
-
-            // const attempts: u8 = 0;
+        pub fn tick(module: *Module, io: Io) void {
+            var attempts: u8 = 0;
 
             // while (true) {
-            //     attempts += 1;
-            //     assert(attempts <= 20);
+            attempts += 1;
+            assert(attempts <= 2);
 
-            //     // const message = try module.queue.getOne(io);
-            //     // log.obj("message getOne", message);
-            //     // switch (message.command) {
-            //     //     .insert => |socket_reader| group.async(io, Module.insertToMemTablesFromSocket, .{ module, io, socket_reader }),
-            //     //     .flush_mem_tables => group.async(io, Module.flushFilledMemBlocks, .{ module, io }),
-            //     // }
-            // }
-            //  log.obj("attempts", attempts);
-            const message = try module.queue.getOne(io);
+            const message = module.queue.getOne(io) catch return;
             log.obj("message getOne", message);
-            // try group.await(io);
+            var task = switch (message.command) {
+                .insert => |socket_reader| io.async(Module.insertToMemTablesFromSocket, .{ module, io, socket_reader }),
+                .flush_mem_tables => io.async(Module.flushFilledMemBlocks, .{ module, io }),
+            };
+
+            defer task.cancel(io) catch {};
+            log.obj("task", task);
+
+            task.await(io) catch |err| {
+                log.obj("TICK", .{});
+                log.err(err);
+                return;
+            };
         }
 
         pub fn insertToMemTables(module: *Module, io: Io, entities: []*Components.Entity) !void {
@@ -188,7 +203,7 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
                     batch_offset,
                 );
 
-                log.obj("pool state after insert", .{ .inserted = inserted, .state = module.pool_mem_tables.state });
+                // log.obj("pool state after insert", .{ .inserted = inserted, .state = module.pool_mem_tables.state });
 
                 batch_offset += inserted;
                 inserted_total += inserted;
@@ -197,21 +212,34 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             module.prev_insert_batch_offset = batch_offset;
         }
 
-        pub fn insertToMemTablesFromSocket(module: *Module, io: Io, socket_reader: *m_queue.SocketReader) !void {
-            _ = module;
+        pub fn insertToMemTablesFromSocket(
+            module: *Module,
+            io: Io,
+            socket_reader: *m_queue.SocketReader,
+        ) Io.Cancelable!void {
             _ = io;
-            var buffer: [Components.entity_size * 4]Components.Entity = undefined;
-            socket_reader.reader.interface.readSliceEndian(Components.Entity, buffer[0..], .little) catch |err| {
+            _ = module;
+ 
+            log.obj("insertToMemTablesFromSocket", .{});
+            // var attempts: u8 = 0;
+            // while (true) {
+            //     attempts += 1;
+            //     assert(attempts < 10);
+            const read_bytes = socket_reader.reader.interface.takeDelimiterExclusive(                '\n',
+            ) catch |err|  {
                 log.err(err);
                 return Io.Cancelable.Canceled;
             };
-            log.obj("insertToMemTablesFromSocket", buffer[0..]);
-        }
+            
+                        log.obj("read_bytes len from socket", read_bytes.len);
 
-        fn readIntLittle(reader: anytype, comptime T: type) !T {
-            var buf: [@sizeOf(T)]u8 = undefined;
-            try reader.readSliceAll(buf[0..]);
-            return std.mem.readInt(T, buf[0..], .little);
+            const read_entities = std.mem.bytesAsSlice(Components.Entity, read_bytes);
+
+
+            log.obj("read entities from socket", read_entities);
+
+            // //     //    try module.insertToMemTables(io, module.insert_entities_ptrs);
+            // // }
         }
 
         pub fn flushFilledMemBlocks(module: *Module, io: Io) Io.Cancelable!void {
@@ -329,7 +357,7 @@ fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*Te
     return input_entries;
 }
 
-test "1Module insert via socket stream and lookup" {
+test "kModule insert via socket stream and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 
@@ -358,14 +386,10 @@ test "1Module insert via socket stream and lookup" {
     // Preparing input data
     const entities_total = 4;
 
-    var input_entities = try allocator.alloc(*TestEntity, entities_total);
+    var input_entities = try allocator.alloc(TestEntity, entities_total);
     defer allocator.free(input_entities);
 
-    for (0..entities_total) |index| {
-        input_entities[index] = try allocator.create(TestEntity);
-    }
-
-    input_entities[0].* = .{
+    input_entities[0] = .{
         .batch_offset = 0,
         .time_label = 0,
         .order_id = 1100,
@@ -373,7 +397,7 @@ test "1Module insert via socket stream and lookup" {
         .quantity = 10,
     };
 
-    input_entities[1].* = .{
+    input_entities[1] = .{
         .batch_offset = 0,
 
         .time_label = 0,
@@ -382,7 +406,7 @@ test "1Module insert via socket stream and lookup" {
         .quantity = 20,
     };
 
-    input_entities[2].* = .{
+    input_entities[2] = .{
         .batch_offset = 0,
 
         .time_label = 0,
@@ -391,7 +415,7 @@ test "1Module insert via socket stream and lookup" {
         .quantity = 30,
     };
 
-    input_entities[3].* = .{
+    input_entities[3] = .{
         .batch_offset = 0,
 
         .time_label = 0,
@@ -400,7 +424,6 @@ test "1Module insert via socket stream and lookup" {
         .quantity = 40,
     };
 
-    defer for (input_entities) |entry| allocator.destroy(entry);
     // -------------------
 
     //==== General test ====
@@ -413,18 +436,26 @@ test "1Module insert via socket stream and lookup" {
     var w = client_stream.writer(io, w_buf[0..]);
 
     try w.interface.writeAll(std.mem.sliceAsBytes(input_entities[0..]));
+    try w.interface.writeByte('\n');
     try w.interface.flush();
 
     const socket_reader: *m_queue.SocketReader = try .init(allocator, io, server_stream);
 
-    var consumer = io.async( ModuleTest.tick, .{ module, io });
-    defer consumer.cancel(io) catch {};
-   
-    var producer = io.async(ModuleTest.Components.Queue.putOne, .{ module.queue, io, .{ .insert = socket_reader } });
-    defer producer.cancel(io) catch {};
+    var tick = io.async(ModuleTest.tick, .{ module, io });
+    defer _ = tick.cancel(io);
+    var put = io.async(ModuleTest.Components.Queue.putOne, .{ module.queue, io, .{ .insert = socket_reader } });
+    defer _ = put.cancel(io);
 
-    try consumer.await(io);
-    try producer.await(io);
+    put.await(io);
+    tick.await(io);
+
+    // try group.await(io);
+    // var group: Io.Group = .init;
+
+    // group.async(io, ModuleTest.tick, .{ module, io });
+    // group.async(io, ModuleTest.Components.Queue.putOne, .{ module.queue, io, .{ .insert = socket_reader } });
+
+    // try group.await(io);
 }
 
 fn createUnixSocketPairStreams() ![2]Io.net.Stream {
