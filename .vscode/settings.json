@@ -1,0 +1,6 @@
+{
+    "zig.buildOnSaveProvider": "zls",
+    "zig.zls.additionalOptions": {
+        
+    }
+}

@@ -163,7 +163,7 @@ test "PoolMsg: reader sees sent socket bytes" {
     var w = client_stream.writer(io, w_buf[0..]);
     try w.interface.writeAll(payload);
     try w.interface.flush();
-    
+
     const queued_reader = try SocketReader.create(allocator, io, server_stream);
     try pool.putOne(io, queued_reader);
 

@@ -233,10 +233,10 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
             
                         log.obj("read_bytes len from socket", read_bytes.len);
 
-            const read_entities = std.mem.bytesAsSlice(Components.Entity, read_bytes);
+            // const read_entities = std.mem.bytesAsSlice(Components.Entity, read_bytes);
 
 
-            log.obj("read entities from socket", read_entities);
+            log.obj("read entities from socket", read_bytes);
 
             // //     //    try module.insertToMemTables(io, module.insert_entities_ptrs);
             // // }
@@ -357,7 +357,7 @@ fn testPreparingUniqueEntries(allocator: Allocator, entries_total: usize) ![]*Te
     return input_entries;
 }
 
-test "kModule insert via socket stream and lookup" {
+test "Module insert via socket stream and lookup" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 

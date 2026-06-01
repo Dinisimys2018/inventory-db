@@ -1,0 +1,23 @@
+syntax = "proto3";
+package inventory;
+
+message OrderItem {
+  optional uint64 time_label = 1;
+
+  uint32 batch_offset = 2;
+  uint32 order_id = 3;
+  uint32 product_id = 4;
+  uint32 quantity = 5;
+}
+
+message OrderItemBatch {
+  repeated OrderItem entities = 1;
+}
+
+message Response {
+  string result = 1;
+}
+
+service OrderItemModule {
+  rpc insert(OrderItemBatch) returns (stream Response) {}
+}

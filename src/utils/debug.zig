@@ -23,6 +23,7 @@ const debug_config: DebugConfig = .{
         .mem_tables = false,
         .scheduler = false,
         .queue = true,
+        .order_item = true,
     }),
 };
 
