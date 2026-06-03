@@ -219,22 +219,22 @@ pub fn ModuleType(comptime config: *const ConfigModule) type {
         ) Io.Cancelable!void {
             _ = io;
             _ = module;
- 
+
             log.obj("insertToMemTablesFromSocket", .{});
             // var attempts: u8 = 0;
             // while (true) {
             //     attempts += 1;
             //     assert(attempts < 10);
-            const read_bytes = socket_reader.reader.interface.takeDelimiterExclusive(                '\n',
-            ) catch |err|  {
+            const read_bytes = socket_reader.reader.interface.takeDelimiterExclusive(
+                '\n',
+            ) catch |err| {
                 log.err(err);
                 return Io.Cancelable.Canceled;
             };
-            
-                        log.obj("read_bytes len from socket", read_bytes.len);
+
+            log.obj("read_bytes len from socket", read_bytes.len);
 
             // const read_entities = std.mem.bytesAsSlice(Components.Entity, read_bytes);
-
 
             log.obj("read entities from socket", read_bytes);
 
@@ -456,6 +456,7 @@ test "Module insert via socket stream and lookup" {
     // group.async(io, ModuleTest.Components.Queue.putOne, .{ module.queue, io, .{ .insert = socket_reader } });
 
     // try group.await(io);
+
 }
 
 fn createUnixSocketPairStreams() ![2]Io.net.Stream {

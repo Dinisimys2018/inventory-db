@@ -11,6 +11,7 @@ pub const Module = enum {
     mem_tables,
     scheduler,
     queue,
+    order_item,
 };
 
 // TODO: P3 UTILS_DEBUG
@@ -35,15 +36,15 @@ pub fn ModulePrinterType(comptime module: Module) type {
             //TODO: P5 UTILS_DEBUG
             // Research comptime conditional
             if (module_config) {
-                std.debug.print("\n=== MODULE{any} ===\n"++fmt++"\n=====================\n", .{ module } ++ args );
+                std.debug.print("\n=== MODULE{any} ===\n" ++ fmt ++ "\n=====================\n", .{module} ++ args);
             }
         }
 
-         pub fn msg(title: []const u8) void {
+        pub fn msg(title: []const u8) void {
             //TODO: P5 UTILS_DEBUG
             // Research comptime conditional
             if (module_config) {
-                std.debug.print("\n=== MODULE{any} ===\n... {s} ...\n=====================\n", .{module, title });
+                std.debug.print("\n=== MODULE{any} ===\n... {s} ...\n=====================\n", .{ module, title });
             }
         }
 
@@ -51,7 +52,7 @@ pub fn ModulePrinterType(comptime module: Module) type {
             //TODO: P5 UTILS_DEBUG
             // Research comptime conditional
             if (module_config) {
-                std.debug.print("\n=== MODULE{any} ===\n... {s} ...\n {any} \n=====================\n", .{module, title, value });
+                std.debug.print("\n=== MODULE{any} ===\n... {s} ...\n {any} \n=====================\n", .{ module, title, value });
             }
         }
 

@@ -141,7 +141,7 @@ pub fn PoolStorageTablesType(
             buffer: []u8,
         ) usize {
             const field_offset = pool_storage_tables.headers.map_fields.getAssertContains(field).offset + pool_storage_tables.table_offsets[table_ptr];
-                
+
             return pool_storage_tables.module.storage.readFromZone(
                 io,
                 .tables_level_0,

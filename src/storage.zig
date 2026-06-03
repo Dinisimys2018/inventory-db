@@ -20,7 +20,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
         global_zone: *Components.GlobalZoneStorage,
 
         pub fn init(allocator: std.mem.Allocator, io: Io, base_dir: Io.Dir, global_zone: *Components.GlobalZoneStorage) !*Storage {
-            const file_open = base_dir.openFile(io, Components.Entity.module_name, .{.mode = .read_write});
+            const file_open = base_dir.openFile(io, Components.Entity.module_name, .{ .mode = .read_write });
 
             // !!! Data file can't be rewrited
             if (file_open) |existing| {
@@ -32,7 +32,7 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
                 }
             }
 
-            const file = try base_dir.createFile(io, Components.Entity.module_name, .{.read = true});
+            const file = try base_dir.createFile(io, Components.Entity.module_name, .{ .read = true });
             errdefer file.close(io);
 
             const storage = try allocator.create(Storage);
@@ -79,11 +79,10 @@ pub fn StorageType(comptime config: *const module.ConfigModule) type {
             zone_key: zone_storage.ZoneKey,
             bytes: []const u8,
         ) !void {
-
             var zone = storage.global_zone.getZone(zone_key);
-            print.obj("write to zone", .{.key = zone_key, .zone = zone});
+            print.obj("write to zone", .{ .key = zone_key, .zone = zone });
             assert(bytes.len <= zone.max_size - zone.position);
-    
+
             try storage.file.writePositionalAll(io, bytes, zone.offset + zone.position);
 
             zone.position += bytes.len;

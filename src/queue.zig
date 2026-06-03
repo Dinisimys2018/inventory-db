@@ -21,7 +21,7 @@ pub const SocketReader = struct {
 
         socket_reader.stream = stream;
         socket_reader.reader = stream.reader(io, socket_reader.buf);
-        
+
         return socket_reader;
     }
 
@@ -50,7 +50,6 @@ const Message = struct {
     planned_ms: u32,
 
     pub fn deinitContents(message: *Message, allocator: Allocator, io: Io) void {
-        
         switch (message.command) {
             Command.insert => message.command.insert.deinit(allocator, io),
             Command.flush_mem_tables => {},

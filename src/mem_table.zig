@@ -144,7 +144,7 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             var block_start_table_ptr: MemTablePtr = tables_count;
             var block_end_table_ptr: MemTablePtr = tables_count;
 
-            while (block_ptr >= 0): (block_ptr -= 1) {
+            while (block_ptr >= 0) : (block_ptr -= 1) {
                 print.obj("block_ptr", block_ptr);
                 mem_table_pool.blocks[block_ptr] = try allocator.create(Block);
 
@@ -252,7 +252,6 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                 // Is Active table filled ?
                 if (rest == to_insert.len) {
                     if (table_pool.active_block.start_ptr == table_pool.active_table_ptr) {
-
                         table_pool.active_block.state = .filled;
                         if (table_pool.active_block_ptr == 0) {
                             next_active_block_ptr = last_block_ptr;
@@ -267,7 +266,10 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
                             table_pool.state = .fullfilled;
                             return entries_end;
                         }
-                        print.obj("insert filled", .{.active_block_ptr = table_pool.active_block_ptr, .next_active_block_ptr = next_active_block_ptr, });
+                        print.obj("insert filled", .{
+                            .active_block_ptr = table_pool.active_block_ptr,
+                            .next_active_block_ptr = next_active_block_ptr,
+                        });
 
                         table_pool.active_block_ptr = next_active_block_ptr;
                         table_pool.active_block = table_pool.blocks[table_pool.active_block_ptr];
@@ -318,7 +320,6 @@ pub fn MemTablePoolType(comptime config: *const module.ConfigModule) type {
             table_pool.blocks[block_ptr].state = .empty;
             table_pool.state = .ready_to_inserts;
         }
-
 
         pub fn getActualEntities(
             mem_table_pool: *MemTablePool,

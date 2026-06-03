@@ -4,6 +4,8 @@ const std = @import("std");
 
 const protobuf = @import("protobuf");
 const fd = protobuf.fd;
+/// import package google.protobuf
+const google_protobuf = @import("google/protobuf.pb.zig");
 
 pub const OrderItem = struct {
     time_label: ?u64 = null,
@@ -11,6 +13,7 @@ pub const OrderItem = struct {
     order_id: u32 = 0,
     product_id: u32 = 0,
     quantity: u32 = 0,
+    update_mask: ?google_protobuf.FieldMask = null,
 
     pub const _desc_table = .{
         .time_label = fd(1, .{ .scalar = .uint64 }),
@@ -18,6 +21,7 @@ pub const OrderItem = struct {
         .order_id = fd(3, .{ .scalar = .uint32 }),
         .product_id = fd(4, .{ .scalar = .uint32 }),
         .quantity = fd(5, .{ .scalar = .uint32 }),
+        .update_mask = fd(6, .submessage),
     };
 
     /// Encodes the message to the writer
@@ -79,7 +83,7 @@ pub const OrderItem = struct {
     }
 };
 
-pub const OrderItemBatch = struct {
+pub const InsertRequest = struct {
     entities: std.ArrayList(OrderItem) = .empty,
 
     pub const _desc_table = .{
@@ -145,7 +149,7 @@ pub const OrderItemBatch = struct {
     }
 };
 
-pub const Response = struct {
+pub const InsertResponse = struct {
     result: []const u8 = &.{},
 
     pub const _desc_table = .{
@@ -211,11 +215,11 @@ pub const Response = struct {
     }
 };
 
-pub fn OrderItemModule(comptime UserDataType: type, comptime ErrorSet: type) type {
+pub fn OrderItemService(comptime UserDataType: type, comptime ErrorSet: type) type {
     return struct {
         pub const package = "inventory";
-        pub const service_name = "OrderItemModule";
+        pub const service_name = "OrderItemService";
 
-        insert: *const fn (userdata: *UserDataType, request: OrderItemBatch, writer_queue: *std.Io.Queue(Response)) ErrorSet!void,
+        Insert: *const fn (userdata: *UserDataType, request: InsertRequest, writer_queue: *std.Io.Queue(InsertResponse)) ErrorSet!void,
     };
 }

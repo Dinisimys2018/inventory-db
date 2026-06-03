@@ -37,7 +37,7 @@ pub fn IndexTableWithTwoKeysType(
         pub fn rewriteMin(index_table: *IndexTable, entity: *const Entity) void {
             const first_new_value = @field(entity, name_first_key);
             const second_new_value = @field(entity, name_second_key);
-            
+
             assert(index_table.min_first_key == 0 or index_table.min_first_key >= first_new_value);
             assert(index_table.min_second_key == 0 or index_table.min_second_key >= second_new_value);
 
@@ -56,7 +56,6 @@ pub fn IndexTableWithTwoKeysType(
             index_table.max_second_key = second_new_value;
         }
 
-
         pub fn clear(index_table: *IndexTable) void {
             index_table.min_first_key = 0;
             index_table.max_first_key = 0;
@@ -68,7 +67,7 @@ pub fn IndexTableWithTwoKeysType(
             return key_value >= index_table.min_first_key and key_value <= index_table.max_first_key;
         }
 
-         pub fn inSecondKeyInterval(index_table: *IndexTable, key_value: SecondKey) bool {
+        pub fn inSecondKeyInterval(index_table: *IndexTable, key_value: SecondKey) bool {
             return key_value >= index_table.min_second_key and key_value <= index_table.max_second_key;
         }
     };

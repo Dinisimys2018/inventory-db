@@ -1,5 +1,6 @@
 syntax = "proto3";
 package inventory;
+import "google/protobuf/field_mask.proto";
 
 message OrderItem {
   optional uint64 time_label = 1;
@@ -8,16 +9,18 @@ message OrderItem {
   uint32 order_id = 3;
   uint32 product_id = 4;
   uint32 quantity = 5;
+
+  google.protobuf.FieldMask update_mask = 6;
 }
 
-message OrderItemBatch {
+message InsertRequest {
   repeated OrderItem entities = 1;
 }
 
-message Response {
+message InsertResponse {
   string result = 1;
 }
 
-service OrderItemModule {
-  rpc insert(OrderItemBatch) returns (stream Response) {}
+service OrderItemService {
+  rpc Insert(InsertRequest) returns (stream InsertResponse) {}
 }

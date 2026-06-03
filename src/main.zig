@@ -8,6 +8,10 @@ const Config = struct {
     port: u16 = 8019,
 };
 
+comptime {
+    _ = @import("order_item_service.zig");
+}
+
 pub fn main(init: std.process.Init) !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
     defer _ = debug_allocator.deinit();
@@ -146,7 +150,7 @@ fn createUnixSocketPairStreams() ![2]net.Stream {
     };
 }
 
-test "PoolMsg: reader sees sent socket bytes" {
+test "PoolMsg  dfdfd" {
     const allocator = std.testing.allocator;
     const io = std.testing.io;
 

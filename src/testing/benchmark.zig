@@ -29,7 +29,7 @@ pub fn SpeedBenchmarkType(
             benchmark.points = try allocator.alloc(*Point, max_points);
 
             var point_idx: usize = 0;
-            while(point_idx < max_points): (point_idx +=1) {
+            while (point_idx < max_points) : (point_idx += 1) {
                 benchmark.points[point_idx] = try allocator.create(Point);
             }
 

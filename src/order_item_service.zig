@@ -3,7 +3,7 @@ const Io = std.Io;
 
 const log = @import("utils/debug.zig").ModulePrinterType(.order_item);
 
-const service = @import("inventory.zig");
+const service = @import("proto_services/inventory.pb.zig");
 
 const MyUserData = struct {
     allocator: std.mem.Allocator,
@@ -12,12 +12,12 @@ const MyUserData = struct {
 
 fn defaultInsert(
     userdata: *MyUserData,
-    request: service.Request,
-    writer_queue: *std.Io.Queue(service.Response),
+    request: service.InsertRequest,
+    writer_queue: *std.Io.Queue(service.InsertResponse),
 ) MyErrors!void {
     // Stream multiple responses
     for (0..5) |i| {
-        const response = service.Response{
+        const response = service.InsertResponse{
             .result = try std.fmt.allocPrint(
                 userdata.allocator,
                 "Stream item {}: {s}",
@@ -35,9 +35,9 @@ const MyErrors = error{
     ServiceUnavailable,
 };
 
-const MyServiceVTable = service.OrderItemModule(MyUserData, MyErrors);
+const MyServiceVTable = service.OrderItemService(MyUserData, MyErrors);
 
-const myServiceVTable: MyServiceVTable = .{ .insert = defaultInsert };
+const myServiceVTable: MyServiceVTable = .{ .Insert = defaultInsert };
 
 fn createUnixSocketPairStreams() ![2]std.Io.net.Stream {
     var fds: [2]std.posix.socket_t = undefined;
@@ -78,12 +78,21 @@ test "OrderItemService: encode-decode" {
     const streams: [2]Io.net.Stream = try createUnixSocketPairStreams();
     const reader_stream = streams[0];
     const writer_stream = streams[1];
-    defer writer_stream.close(io);
 
-    var w_buf: [128]u8 = undefined;
-    var w = writer_stream.writer(io, w_buf[0..]);
+    var writer_buf: [128]u8 = undefined;
+    var writer = writer_stream.writer(io, writer_buf[0..]);
 
-    try order_item.encode(&w.interface, allocator);
-    const order_item_decoded = try service.OrderItem.decode(reader_stream, allocator);
-    log.obj("order_item_decoded", order_item_decoded);
+    var reader_buf: [128]u8 = undefined;
+    var reader = reader_stream.reader(io, reader_buf[0..]);
+    defer reader_stream.close(io);
+
+    try order_item.encode(&writer.interface, allocator);
+    try writer.interface.flush();
+    writer_stream.close(io);
+
+    const order_item_decoded = try service.OrderItem.decode(&reader.interface, allocator);
+    log.obj("Decoded OrderItem", order_item_decoded);
 }
+
+
+
